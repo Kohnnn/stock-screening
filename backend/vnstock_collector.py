@@ -1,8 +1,12 @@
 """
 VnStock Data Collector with robust rate limiting and circuit breaker protection.
 
-Uses VCI source exclusively (TCBS has endpoint issues).
+Supports VCI and TCBS sources. TCBS Screener API is available in vnstock 3.3.1+.
 Designed for 24/7 operation with vnstock's limited API calls.
+
+Features (vnstock 3.3.1+):
+- ProxyManager for automatic proxy support when IP blocked
+- Unified data source management (VCI, TCBS, FMP)
 """
 
 import asyncio
@@ -14,6 +18,12 @@ import pandas as pd
 
 try:
     from vnstock import Vnstock, Listing, Screener, Company, Trading
+    # ProxyManager for vnstock 3.3.1+ (optional feature)
+    try:
+        from vnstock.core.utils.proxy_manager import ProxyManager
+        PROXY_AVAILABLE = True
+    except ImportError:
+        PROXY_AVAILABLE = False
 except ImportError:
     logger.error("❌ vnstock library not installed. Install with: pip install vnstock")
     raise
@@ -27,27 +37,45 @@ class VnStockCollector:
     """
     Robust data collector for Vietnamese stock market data.
     
-    Uses VCI source (TCBS endpoints are broken in v3.2.6).
+    Supports VCI and TCBS sources. TCBS fixed in vnstock 3.3.1+.
     
     Features:
     - Token bucket rate limiting for smooth API usage
     - Circuit breaker for failure protection
     - Exponential backoff on errors
     - Progress tracking for long operations
+    - ProxyManager support for avoiding IP blocks (vnstock 3.3.1+)
     """
     
     def __init__(
         self,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
+        enable_proxy: bool = None,
     ):
         """Initialize the collector with protection mechanisms."""
         # Initialize vnstock clients
         self.vnstock = Vnstock()
         self.listing = Listing()
         
-        # Use VCI source exclusively (TCBS has issues)
-        self.default_source = 'VCI'
+        # Use configured source (TCBS now works in vnstock 3.3.1+)
+        self.default_source = settings.DEFAULT_VNSTOCK_SOURCE
+        
+        # Initialize ProxyManager if enabled (vnstock 3.3.1+)
+        if enable_proxy is None:
+            enable_proxy = settings.ENABLE_VNSTOCK_PROXY
+        
+        self.proxy_manager = None
+        if enable_proxy and PROXY_AVAILABLE:
+            try:
+                self.proxy_manager = ProxyManager()
+                proxies = self.proxy_manager.fetch_proxies(limit=10)
+                logger.info(f"🌐 ProxyManager enabled with {len(proxies)} proxies")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize ProxyManager: {e}")
+                self.proxy_manager = None
+        elif enable_proxy and not PROXY_AVAILABLE:
+            logger.warning("⚠️ ProxyManager requested but not available (requires vnstock 3.3.1+)")
         
         # Protection mechanisms
         self.rate_limiter = rate_limiter or get_rate_limiter(
@@ -367,52 +395,92 @@ class VnStockCollector:
         exchange: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Collect screener data for all stocks at once.
+        Collect screener data for all stocks using price_board API.
         
-        Uses vnstock's built-in screener for efficient bulk data collection.
-        Returns: List of stock data with current metrics
+        Gets listings first, then fetches real prices via price_board in batches.
+        Returns: List of stock data with current prices
         """
-        logger.info("📊 Collecting screener data...")
+        logger.info("📊 Collecting screener data via price_board...")
         
         try:
-            # Use stock screener - much more efficient than per-symbol calls
-            stock = self.vnstock.stock(symbol="VNM", source=self.default_source)
-            
-            # Try to get screener data
-            df = await self._protected_api_call(
-                stock.listing.symbols_by_exchange
-            )
+            # First get all stock listings
+            df = await self._protected_api_call(self.listing.all_symbols)
             
             if df is None or df.empty:
-                # Fallback to listing API
-                df = await self._protected_api_call(self.listing.all_symbols)
-            
-            if df is None or df.empty:
-                logger.warning("⚠️ No screener data returned")
+                logger.warning("⚠️ No listings returned")
                 return []
             
-            logger.info(f"✅ Screener data: {len(df)} stocks")
+            logger.info(f"📋 Got {len(df)} stock listings")
             
-            # Convert to list of dicts with all available metrics
-            results = []
+            # Extract symbols and company names
+            stocks_info = {}
             for _, row in df.iterrows():
-                stock_data = {
-                    'symbol': str(row.get('symbol', '')).upper(),
-                    'company_name': row.get('organ_name', row.get('organName', '')),
-                    'exchange': row.get('exchange', row.get('comGroupCode', '')),
-                    'current_price': self._safe_float(row.get('price', row.get('closePrice'))),
-                    'price_change': self._safe_float(row.get('priceChange')),
-                    'percent_change': self._safe_float(row.get('percentChange')),
-                    'volume': self._safe_int(row.get('volume', row.get('totalVolume'))),
-                    'market_cap': self._safe_float(row.get('marketCap')),
-                    'pe_ratio': self._safe_float(row.get('pe', row.get('PE'))),
-                    'pb_ratio': self._safe_float(row.get('pb', row.get('PB'))),
-                    'eps': self._safe_float(row.get('eps', row.get('EPS'))),
-                    'roe': self._safe_float(row.get('roe', row.get('ROE'))),
-                    'roa': self._safe_float(row.get('roa', row.get('ROA'))),
+                symbol = str(row.get('symbol', '')).upper()
+                stocks_info[symbol] = {
+                    'symbol': symbol,
+                    'company_name': row.get('organ_name', ''),
+                    'exchange': row.get('exchange', ''),
                 }
-                results.append(stock_data)
             
+            symbols = list(stocks_info.keys())
+            
+            # Fetch prices in batches via price_board (efficient bulk API)
+            results = []
+            batch_size = 100  # price_board can handle ~100 symbols per call
+            
+            for i in range(0, len(symbols), batch_size):
+                batch = symbols[i:i + batch_size]
+                
+                if self.circuit_breaker.is_open:
+                    logger.warning("⚠️ Circuit open, stopping price fetch")
+                    break
+                
+                try:
+                    trading = Trading(symbol='VN30F1M')
+                    price_df = await self._protected_api_call(
+                        trading.price_board,
+                        symbols_list=batch
+                    )
+                    
+                    if price_df is not None and not price_df.empty:
+                        # Flatten MultiIndex columns if present
+                        if isinstance(price_df.columns, pd.MultiIndex):
+                            price_df.columns = ['_'.join(map(str, col)).strip() for col in price_df.columns.values]
+                        
+                        for _, row in price_df.iterrows():
+                            # Use flattened column names
+                            symbol = str(row.get('listing_symbol', row.get('symbol', ''))).upper()
+                            info = stocks_info.get(symbol, {})
+                            
+                            # Extract prices from flattened columns
+                            match_price = self._safe_float(row.get('match_info_match_price', row.get('match_price')))
+                            prior_close = self._safe_float(row.get('listing_prior_close_price', row.get('prior_close_price')))
+                            ref_price = self._safe_float(row.get('listing_ref_price', row.get('ref_price')))
+                            
+                            stock_data = {
+                                'symbol': symbol,
+                                'company_name': info.get('company_name', row.get('listing_organ_name', '')),
+                                'exchange': info.get('exchange', row.get('listing_exchange', '')),
+                                'current_price': match_price or prior_close or ref_price,
+                                'price_change': (match_price - prior_close) if match_price and prior_close else None,
+                                'percent_change': ((match_price - prior_close) / prior_close * 100) if match_price and prior_close else None,
+                                'volume': self._safe_int(row.get('match_info_accumulated_volume', row.get('accumulated_volume'))),
+                                'open_price': ref_price,
+                                'high_price': self._safe_float(row.get('match_info_highest', row.get('highest'))),
+                                'low_price': self._safe_float(row.get('match_info_lowest', row.get('lowest'))),
+                                'close_price': match_price,
+                            }
+                            if stock_data['symbol']:  # Only add if symbol exists
+                                results.append(stock_data)
+                    
+                    if (i + batch_size) % 500 == 0:
+                        logger.info(f"📊 Price progress: {min(i + batch_size, len(symbols))}/{len(symbols)}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Batch {i}-{i+batch_size} failed: {e}")
+                    continue
+            
+            logger.info(f"✅ Screener data: {len(results)} stocks with prices")
             return results
             
         except CircuitOpenError:
@@ -847,12 +915,12 @@ class VnStockCollector:
         logger.info("📊 Collecting FULL screener data (84 metrics)...")
         
         try:
-            # Use the Screener API - TCBS source only
+            # Use the Screener API - correct syntax per vnstock docs
             screener = Screener()
             
+            # Correct API call: Screener().stock(limit=N)
             df = await self._protected_api_call(
                 screener.stock,
-                params={"exchangeName": exchanges},
                 limit=limit
             )
             

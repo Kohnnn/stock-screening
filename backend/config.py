@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # Price history settings
     PRICE_HISTORY_DAYS: int = int(os.getenv("PRICE_HISTORY_DAYS", "365"))
     
+    # Proxy Settings (vnstock 3.3.1+)
+    # Enable automatic proxy for avoiding IP blocks
+    ENABLE_VNSTOCK_PROXY: bool = os.getenv("ENABLE_VNSTOCK_PROXY", "false").lower() == "true"
+    
     # ===========================================
     # Logging Configuration
     # ===========================================

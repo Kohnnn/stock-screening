@@ -2,6 +2,7 @@
 
 > **Official Documentation**: [vnstocks.com/docs](https://vnstocks.com/docs)
 > **GitHub**: [github.com/thinh-vu/vnstock](https://github.com/thinh-vu/vnstock)
+> **Version**: 3.3.1+ (TCBS endpoints fixed, ProxyManager available)
 
 This document provides a complete reference for all vnstock library functions and how to use them effectively without violating rate limits.
 
@@ -11,27 +12,50 @@ This document provides a complete reference for all vnstock library functions an
 
 1. [Installation & Setup](#installation--setup)
 2. [Data Sources](#data-sources)
-3. [Listing API](#listing-api)
-4. [Company Information API](#company-information-api)
-5. [Price History API](#price-history-api)
-6. [Financial Statements API](#financial-statements-api)
-7. [Stock Screener API](#stock-screener-api)
-8. [Trading Board API](#trading-board-api)
-9. [Rate Limit Guidelines](#rate-limit-guidelines)
-10. [Best Practices](#best-practices)
+3. [Proxy Support (3.3.1+)](#proxy-support)
+4. [Listing API](#listing-api)
+5. [Company Information API](#company-information-api)
+6. [Price History API](#price-history-api)
+7. [Financial Statements API](#financial-statements-api)
+8. [Stock Screener API](#stock-screener-api)
+9. [Trading Board API](#trading-board-api)
+10. [Rate Limit Guidelines](#rate-limit-guidelines)
+11. [Best Practices](#best-practices)
 
 ---
 
 ## Installation & Setup
 
 ```bash
-pip install vnstock
+pip install vnstock==3.3.1
 ```
 
 ### Basic Import Pattern
 ```python
 from vnstock import Vnstock, Listing, Company, Finance, Screener, Trading
 ```
+
+---
+
+## Proxy Support (3.3.1+)
+
+VnStock 3.3.1 includes automatic proxy support to avoid IP blocking:
+
+```python
+from vnstock.core.utils.proxy_manager import ProxyManager
+
+# Initialize proxy manager
+proxy_manager = ProxyManager(timeout=15)
+
+# Fetch available proxies
+proxies = proxy_manager.fetch_proxies(limit=10)
+print(f"Got {len(proxies)} proxies")
+
+# Get best working proxy
+best_proxy = proxy_manager.get_best_proxy()
+```
+
+> **Note**: Proxy is useful when accessing from cloud environments (Google Colab, Kaggle) or when experiencing IP blocks.
 
 ---
 

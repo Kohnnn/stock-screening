@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { PriceChart } from './components/PriceChart';
+import { AIAnalysis } from './components/AIAnalysis';
 import './index.css';
 
 // ============================================
@@ -98,7 +99,7 @@ function getMockStocks(filters?: StockFilters) {
 // Tab Types
 // ============================================
 
-type TabId = 'screener' | 'comparison' | 'database';
+type TabId = 'screener' | 'comparison' | 'database' | 'ai-analysis';
 
 // ============================================
 // Header Component
@@ -950,6 +951,12 @@ function AppContent() {
           >
             💾 {t('nav.database')}
           </button>
+          <button
+            className={`tab ${activeTab === 'ai-analysis' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ai-analysis')}
+          >
+            🤖 AI Analysis
+          </button>
         </div>
 
         {activeTab === 'screener' && <StockScreener />}
@@ -957,6 +964,8 @@ function AppContent() {
         {activeTab === 'comparison' && <StockComparison />}
 
         {activeTab === 'database' && <DatabaseManager />}
+
+        {activeTab === 'ai-analysis' && <AIAnalysis />}
       </main>
 
       <footer style={{

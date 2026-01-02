@@ -226,17 +226,22 @@ class UpdateScheduler:
         db: Database,
         collector: VnStockCollector
     ) -> int:
-        """Update screener data (current prices)."""
-        logger.info("📊 Updating screener data...")
+        """Update screener data (current prices + full metrics)."""
+        logger.info("📊 Updating screener data with FULL metrics...")
         
-        # Get all screener data
-        prices = await collector.collect_screener_data()
+        # Use collect_screener_full for complete 84-metric data
+        prices = await collector.collect_screener_full()
+        
+        if not prices:
+            # Fallback to basic screener data
+            logger.warning("⚠️ Full screener failed, falling back to basic")
+            prices = await collector.collect_screener_data()
         
         if not prices:
             logger.warning("⚠️ No screener data collected")
             return 0
         
-        # Upsert stock prices
+        # Upsert stock prices with all metrics
         count = await db.upsert_stock_prices(prices)
         
         # Also update stock listings from screener
@@ -245,6 +250,7 @@ class UpdateScheduler:
                 'symbol': p['symbol'],
                 'company_name': p.get('company_name'),
                 'exchange': p.get('exchange'),
+                'industry': p.get('industry'),
             }
             for p in prices
         ]

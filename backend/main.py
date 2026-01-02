@@ -527,6 +527,104 @@ async def get_indices(
 
 
 # ============================================
+# AI Analysis Endpoints
+# ============================================
+
+class AIAnalysisRequestModel(BaseModel):
+    """Request model for AI stock analysis."""
+    api_key: str
+    model: str = "gemini-2.0-flash-exp"
+    custom_prompt: Optional[str] = None
+    enable_grounding: bool = True
+
+
+class AITestConnectionRequest(BaseModel):
+    """Request model for testing AI connection."""
+    api_key: str
+    model: str = "gemini-2.0-flash-exp"
+
+
+@app.post("/api/ai/analyze/{symbol}")
+async def analyze_stock(symbol: str, request: AIAnalysisRequestModel):
+    """
+    Generate AI-powered investment analysis for a stock.
+    
+    Uses Google Gemini with optional Google Search grounding for up-to-date information.
+    Returns a comprehensive 9-section analysis in Vietnamese.
+    """
+    from ai_service import AIAnalysisService, AIAnalysisRequest
+    
+    db = await get_database()
+    service = AIAnalysisService(db)
+    
+    try:
+        analysis_request = AIAnalysisRequest(
+            symbol=symbol.upper(),
+            api_key=request.api_key,
+            model=request.model,
+            custom_prompt=request.custom_prompt,
+            enable_grounding=request.enable_grounding
+        )
+        
+        result = await service.analyze(analysis_request)
+        
+        return {
+            "success": True,
+            "analysis": result.analysis,
+            "metadata": {
+                "symbol": result.symbol,
+                "company_name": result.company_name,
+                "model": result.model,
+                "grounding_sources": result.grounding_sources,
+                "generated_at": result.generated_at,
+                "tokens_used": result.tokens_used
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"AI analysis failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+
+
+@app.post("/api/ai/test-connection")
+async def test_ai_connection(request: AITestConnectionRequest):
+    """Test AI API connection with provided credentials."""
+    from ai_service import GeminiClient
+    
+    client = GeminiClient(api_key=request.api_key, model=request.model)
+    
+    try:
+        is_valid = await client.test_connection()
+        return {
+            "success": is_valid,
+            "model": request.model,
+            "message": "Connection successful" if is_valid else "Connection failed - invalid response"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "model": request.model,
+            "message": str(e)
+        }
+
+
+@app.get("/api/ai/models")
+async def get_ai_models():
+    """Get list of available AI models."""
+    from ai_service import get_available_models
+    
+    models = get_available_models()
+    return {
+        "models": [
+            {"id": model_id, "name": model_name}
+            for model_id, model_name in models.items()
+        ],
+        "default": "gemini-2.0-flash-exp"
+    }
+
+
+# ============================================
 # Health & Monitoring Endpoints
 # ============================================
 
