@@ -1,0 +1,40 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Build output
+dist
+dist-ssr
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backend (handled separately)
+backend/venv
+backend/__pycache__
+backend/*.pyc
+backend/logs
+backend/data/*.db
+
+# Environment files
+.env
+*.local
+
+# Docker
+docker-compose*.yml
+*.dockerfile
+Dockerfile*
