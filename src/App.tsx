@@ -627,7 +627,7 @@ function StockComparison() {
                     <td><strong>{metric.label}</strong></td>
                     {selectedStocks.map(stock => (
                       <td key={stock.symbol} style={{ textAlign: 'center' }}>
-                        {metric.format((stock as any)[metric.key])}
+                        {(metric.format as any)((stock as any)[metric.key])}
                       </td>
                     ))}
                   </tr>

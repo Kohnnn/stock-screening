@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   frontend:
     build:
@@ -5,10 +7,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "80:80"
+    volumes:
+      # This needs to be indented so it belongs to 'frontend'
+      - C:/Dockerstorage:/app/shared_data
     depends_on:
       - backend
     restart: unless-stopped
 
+  # 'backend' must be indented to line up with 'frontend'
   backend:
     build:
       context: ./backend
@@ -16,13 +22,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/data:/app/data
+      # Host Path (Your PC)       : Container Path (Internal)
+      - C:/Dockerstorage:/app/data
+      # Keep logs relative
       - ./backend/logs:/app/logs
     env_file:
       - ./backend/.env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
