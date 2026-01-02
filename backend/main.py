@@ -318,93 +318,6 @@ async def get_sectors():
     return {"sectors": sectors}
 
 
-@app.get("/api/stocks/screener")
-async def screen_stocks(
-    # Basic filters
-    exchange: Optional[str] = Query(None, description="Filter by exchange"),
-    sector: Optional[str] = Query(None, description="Filter by sector"),
-    # Financial filters
-    pe_min: Optional[float] = Query(None, ge=0, description="Minimum P/E ratio"),
-    pe_max: Optional[float] = Query(None, ge=0, description="Maximum P/E ratio"),
-    pb_min: Optional[float] = Query(None, ge=0, description="Minimum P/B ratio"),
-    pb_max: Optional[float] = Query(None, ge=0, description="Maximum P/B ratio"),
-    roe_min: Optional[float] = Query(None, description="Minimum ROE (%)"),
-    market_cap_min: Optional[float] = Query(None, ge=0, description="Minimum market cap"),
-    # Technical filters
-    rsi_min: Optional[float] = Query(None, ge=0, le=100, description="Minimum RSI (0-100)"),
-    rsi_max: Optional[float] = Query(None, ge=0, le=100, description="Maximum RSI (0-100)"),
-    trend: Optional[str] = Query(None, description="Stock trend filter"),
-    adx_min: Optional[float] = Query(None, ge=0, description="Minimum ADX (trend strength)"),
-    # Pagination
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
-):
-    """
-    Advanced stock screener with technical indicators.
-    
-    Technical trend options: 'strong_uptrend', 'uptrend', 'sideways', 'downtrend', 'strong_downtrend'
-    """
-    db = await get_database()
-    
-    # Get stocks with metrics
-    stocks = await db.get_stocks_with_metrics(
-        rsi_min=rsi_min,
-        rsi_max=rsi_max,
-        trend=trend,
-        adx_min=adx_min,
-        limit=page_size * page,  # Get enough for pagination
-    )
-    
-    # Apply additional filters
-    filtered = []
-    for stock in stocks:
-        # Basic filters
-        if exchange and stock.get('exchange') != exchange:
-            continue
-        if sector and stock.get('sector') != sector:
-            continue
-        
-        # Financial filters
-        pe = stock.get('pe_ratio')
-        if pe_min is not None and (pe is None or pe < pe_min):
-            continue
-        if pe_max is not None and (pe is None or pe > pe_max):
-            continue
-        
-        pb = stock.get('pb_ratio')
-        if pb_min is not None and (pb is None or pb < pb_min):
-            continue
-        if pb_max is not None and (pb is None or pb > pb_max):
-            continue
-        
-        roe = stock.get('roe')
-        if roe_min is not None and (roe is None or roe < roe_min):
-            continue
-        
-        market_cap = stock.get('market_cap')
-        if market_cap_min is not None and (market_cap is None or market_cap < market_cap_min):
-            continue
-        
-        filtered.append(stock)
-    
-    # Paginate
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated = filtered[start:end]
-    
-    return {
-        "stocks": paginated,
-        "total": len(filtered),
-        "page": page,
-        "page_size": page_size,
-        "filters_applied": {
-            "rsi": {"min": rsi_min, "max": rsi_max},
-            "trend": trend,
-            "adx_min": adx_min,
-        }
-    }
-
-
 @app.get("/api/stocks/{symbol}/metrics")
 async def get_stock_metrics(symbol: str):
     """Get calculated technical metrics for a stock."""
@@ -443,17 +356,18 @@ async def get_database_status():
 async def trigger_update(
     background_tasks: BackgroundTasks,
     task_name: Optional[str] = Query(None, description="Specific task to run"),
+    force: bool = Query(False, description="Force update even during market hours"),
 ):
     """Trigger a manual data update."""
     scheduler = await get_scheduler()
     
-    if not scheduler.can_run_update():
+    if not force and not scheduler.can_run_update():
         return JSONResponse(
             status_code=409,
             content={
                 "message": "Cannot run update during market hours",
                 "market_hours": scheduler.is_market_hours(),
-                "suggestion": "Wait until after 15:00 or run on weekends"
+                "suggestion": "Wait until after 15:00 or set force=true"
             }
         )
     

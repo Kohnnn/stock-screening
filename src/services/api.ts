@@ -151,9 +151,12 @@ class ApiService {
     /**
      * Trigger data update
      */
-    async triggerUpdate(taskName?: string): Promise<{ message: string; task: string; status: string }> {
-        const query = taskName ? `?task_name=${taskName}` : '';
-        return this.fetchJson(`/api/database/update${query}`, { method: 'POST' });
+    async triggerUpdate(taskName?: string, force: boolean = true): Promise<{ message: string; task: string; status: string }> {
+        const params = new URLSearchParams();
+        if (taskName) params.append('task_name', taskName);
+        if (force) params.append('force', 'true');
+        const query = params.toString();
+        return this.fetchJson(`/api/database/update${query ? `?${query}` : ''}`, { method: 'POST' });
     }
 
     /**

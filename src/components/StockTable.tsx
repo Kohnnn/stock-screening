@@ -12,6 +12,9 @@ interface StockTableProps {
     onSelectStock?: (stock: Stock) => void;
     selectedStocks?: string[];
     onToggleSelect?: (symbol: string) => void;
+    // Watchlist props
+    watchlist?: string[];
+    onToggleWatchlist?: (symbol: string) => void;
 }
 
 // ============================================
@@ -33,6 +36,8 @@ export function StockTable({
     onSelectStock,
     selectedStocks = [],
     onToggleSelect,
+    watchlist = [],
+    onToggleWatchlist,
 }: StockTableProps) {
     const { t, formatCurrency, formatNumber, formatPercent } = useLanguage();
     const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
@@ -129,6 +134,9 @@ export function StockTable({
                         {onToggleSelect && (
                             <th style={{ width: '40px' }}></th>
                         )}
+                        {onToggleWatchlist && (
+                            <th style={{ width: '40px' }}>⭐</th>
+                        )}
                         <th
                             className="sortable"
                             onClick={() => handleSort('symbol')}
@@ -198,6 +206,26 @@ export function StockTable({
                                         onChange={() => onToggleSelect(stock.symbol)}
                                         onClick={(e) => e.stopPropagation()}
                                     />
+                                </td>
+                            )}
+                            {onToggleWatchlist && (
+                                <td>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onToggleWatchlist(stock.symbol);
+                                        }}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            fontSize: '16px',
+                                            opacity: watchlist.includes(stock.symbol) ? 1 : 0.3,
+                                        }}
+                                        title={watchlist.includes(stock.symbol) ? 'Remove from watchlist' : 'Add to watchlist'}
+                                    >
+                                        ⭐
+                                    </button>
                                 </td>
                             )}
                             <td>
