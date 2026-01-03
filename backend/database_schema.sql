@@ -43,6 +43,19 @@ CREATE TABLE IF NOT EXISTS stock_prices (
     roa REAL,
     revenue REAL,
     profit REAL,
+    -- Cophieu68 specific metrics
+    book_value REAL,
+    ps_ratio REAL,
+    total_debt REAL,
+    owner_equity REAL,
+    total_assets REAL,
+    debt_to_equity REAL,
+    equity_to_assets REAL,
+    cash REAL,
+    foreign_ownership REAL,
+    avg_volume_52w INTEGER,
+    listed_shares INTEGER,
+    -- Metadata
     data_source TEXT DEFAULT 'vnstock',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)

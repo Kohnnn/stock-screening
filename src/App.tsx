@@ -3,7 +3,13 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { PriceChart } from './components/PriceChart';
 import { AIAnalysis } from './components/AIAnalysis';
+import { DataBrowser } from './components/DataBrowser';
+import { TradingViewChart } from './components/TradingViewChart';
+import { FilterPresets } from './components/FilterPresets';
 import './index.css';
+
+// API Base URL - empty string uses relative paths (works with nginx proxy in Docker)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // ============================================
 // Types (Inline to avoid module resolution issues)
@@ -12,7 +18,7 @@ import './index.css';
 interface Stock {
   symbol: string;
   companyName: string;
-  exchange: 'HOSE' | 'HNX' | 'UPCOM';
+  exchange: string;
   sector?: string;
   industry?: string;
   currentPrice?: number;
@@ -29,16 +35,47 @@ interface Stock {
 }
 
 interface StockFilters {
+  // Basic filters
   exchange?: 'HOSE' | 'HNX' | 'UPCOM' | '';
   sector?: string;
+  industry?: string;
+  search?: string;
+
+  // General metrics (Nhóm Tổng Quan)
+  marketCapMin?: number;
+  marketCapMax?: number;
+  priceMin?: number;
+  priceMax?: number;
+  priceChangeMin?: number;
+  priceChangeMax?: number;
+  adtvValueMin?: number;
+  volumeVsAdtvMin?: number;
+
+  // Technical signals (Nhóm Tín Hiệu Kỹ Thuật)
+  stockRatingMin?: number;
+  rsMin?: number;
+  rsMax?: number;
+  rsiMin?: number;
+  rsiMax?: number;
+  priceVsSma20Min?: number;
+  priceVsSma20Max?: number;
+  macdHistogramMin?: number;
+  stockTrend?: string;
+  priceReturn1mMin?: number;
+  priceReturn1mMax?: number;
+
+  // Financial indicators (Nhóm Chỉ Số Tài Chính)
   peMin?: number;
   peMax?: number;
   pbMin?: number;
   pbMax?: number;
   roeMin?: number;
-  marketCapMin?: number;
-  marketCapMax?: number;
-  search?: string;
+  roeMax?: number;
+  revenueGrowthMin?: number;
+  npatGrowthMin?: number;
+  netMarginMin?: number;
+  grossMarginMin?: number;
+  dividendYieldMin?: number;
 }
 
 // ============================================
@@ -155,6 +192,87 @@ interface FiltersPanelProps {
   onClear: () => void;
 }
 
+// Collapsible section component
+function FilterSection({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  return (
+    <div className="filter-section">
+      <div className="filter-section-header" onClick={() => setIsOpen(!isOpen)}>
+        <span>{isOpen ? '▼' : '▶'} {title}</span>
+      </div>
+      {isOpen && <div className="filter-section-content">{children}</div>}
+    </div>
+  );
+}
+
+// Tooltip wrapper for single inputs
+function FilterInput({
+  label,
+  tooltip,
+  children
+}: {
+  label: string;
+  tooltip: string;
+  children: React.ReactNode
+}) {
+  return (
+    <div className="form-group" title={tooltip}>
+      <label className="form-label">
+        {label}
+        <span className="tooltip-icon" title={tooltip}>ⓘ</span>
+      </label>
+      {children}
+    </div>
+  );
+}
+
+// Compact range filter for min-max values
+function RangeFilter({
+  label,
+  tooltip,
+  minValue,
+  maxValue,
+  onMinChange,
+  onMaxChange,
+  minPlaceholder = "Min",
+  maxPlaceholder = "Max",
+}: {
+  label: string;
+  tooltip: string;
+  minValue?: number;
+  maxValue?: number;
+  onMinChange: (v: number | undefined) => void;
+  onMaxChange: (v: number | undefined) => void;
+  minPlaceholder?: string;
+  maxPlaceholder?: string;
+}) {
+  return (
+    <div className="range-filter" title={tooltip}>
+      <label className="range-filter-label">
+        {label}
+        <span className="tooltip-icon" title={tooltip}>ⓘ</span>
+      </label>
+      <div className="range-inputs">
+        <input
+          type="number"
+          className="range-input"
+          placeholder={minPlaceholder}
+          value={minValue ?? ''}
+          onChange={(e) => onMinChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+        />
+        <span className="range-separator">-</span>
+        <input
+          type="number"
+          className="range-input"
+          placeholder={maxPlaceholder}
+          value={maxValue ?? ''}
+          onChange={(e) => onMaxChange(e.target.value ? parseFloat(e.target.value) : undefined)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function FiltersPanel({ filters, onFiltersChange, onApply, onClear }: FiltersPanelProps) {
   const { t } = useLanguage();
 
@@ -171,7 +289,14 @@ function FiltersPanel({ filters, onFiltersChange, onApply, onClear }: FiltersPan
         <h3 className="card-title">{t('screener.filters')}</h3>
       </div>
 
-      <div className="filters-grid">
+      {/* Filter Presets */}
+      <FilterPresets
+        currentFilters={filters}
+        onLoadPreset={(preset) => onFiltersChange(preset as StockFilters)}
+      />
+
+      {/* Basic Filters */}
+      <div className="filters-grid filters-basic">
         <div className="form-group">
           <label className="form-label">{t('filter.exchange')}</label>
           <select
@@ -186,39 +311,6 @@ function FiltersPanel({ filters, onFiltersChange, onApply, onClear }: FiltersPan
         </div>
 
         <div className="form-group">
-          <label className="form-label">{t('filter.pe.min')}</label>
-          <input
-            type="number"
-            className="form-input"
-            placeholder="0"
-            value={filters.peMin ?? ''}
-            onChange={(e) => handleChange('peMin', e.target.value ? parseFloat(e.target.value) : undefined)}
-          />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">{t('filter.pe.max')}</label>
-          <input
-            type="number"
-            className="form-input"
-            placeholder="100"
-            value={filters.peMax ?? ''}
-            onChange={(e) => handleChange('peMax', e.target.value ? parseFloat(e.target.value) : undefined)}
-          />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">{t('filter.roe.min')}</label>
-          <input
-            type="number"
-            className="form-input"
-            placeholder="0"
-            value={filters.roeMin ?? ''}
-            onChange={(e) => handleChange('roeMin', e.target.value ? parseFloat(e.target.value) : undefined)}
-          />
-        </div>
-
-        <div className="form-group">
           <label className="form-label">{t('common.search')}</label>
           <input
             type="text"
@@ -229,6 +321,140 @@ function FiltersPanel({ filters, onFiltersChange, onApply, onClear }: FiltersPan
           />
         </div>
       </div>
+
+      {/* General Metrics Section */}
+      <FilterSection title="📊 Tổng Quan (General)" defaultOpen={true}>
+        <div className="filters-compact">
+          <RangeFilter
+            label="Vốn hóa (tỷ)"
+            tooltip="Vốn hóa thị trường: Tổng giá trị thị trường của số cổ phiếu đang lưu hành"
+            minValue={filters.marketCapMin}
+            maxValue={filters.marketCapMax}
+            onMinChange={(v) => handleChange('marketCapMin', v)}
+            onMaxChange={(v) => handleChange('marketCapMax', v)}
+          />
+          <RangeFilter
+            label="Giá (VND)"
+            tooltip="Thị giá: Mức giá khớp lệnh gần nhất của cổ phiếu"
+            minValue={filters.priceMin}
+            maxValue={filters.priceMax}
+            onMinChange={(v) => handleChange('priceMin', v)}
+            onMaxChange={(v) => handleChange('priceMax', v)}
+          />
+          <FilterInput label="GTGD TB (tỷ)" tooltip="Giá trị giao dịch trung bình ngày trong 20 phiên">
+            <input
+              type="number"
+              className="form-input"
+              placeholder="Tối thiểu"
+              value={filters.adtvValueMin ?? ''}
+              onChange={(e) => handleChange('adtvValueMin', e.target.value ? parseFloat(e.target.value) : undefined)}
+            />
+          </FilterInput>
+        </div>
+      </FilterSection>
+
+      {/* Technical Signals Section */}
+      <FilterSection title="📈 Kỹ Thuật (Technical)" defaultOpen={false}>
+        <div className="filters-compact">
+          <RangeFilter
+            label="RSI"
+            tooltip="Chỉ số sức mạnh tương đối: Dưới 30 = quá bán, Trên 70 = quá mua"
+            minValue={filters.rsiMin}
+            maxValue={filters.rsiMax}
+            onMinChange={(v) => handleChange('rsiMin', v)}
+            onMaxChange={(v) => handleChange('rsiMax', v)}
+            minPlaceholder="0"
+            maxPlaceholder="100"
+          />
+          <RangeFilter
+            label="RS 3 tháng"
+            tooltip="Sức mạnh tương quan: So sánh hiệu suất với thị trường"
+            minValue={filters.rsMin}
+            maxValue={filters.rsMax}
+            onMinChange={(v) => handleChange('rsMin', v)}
+            onMaxChange={(v) => handleChange('rsMax', v)}
+          />
+          <RangeFilter
+            label="Giá/SMA20 %"
+            tooltip="Khoảng cách giá so với đường trung bình 20 ngày"
+            minValue={filters.priceVsSma20Min}
+            maxValue={filters.priceVsSma20Max}
+            onMinChange={(v) => handleChange('priceVsSma20Min', v)}
+            onMaxChange={(v) => handleChange('priceVsSma20Max', v)}
+          />
+          <FilterInput label="Xu hướng" tooltip="Trạng thái xu hướng giá">
+            <select
+              className="form-select"
+              value={filters.stockTrend || ''}
+              onChange={(e) => handleChange('stockTrend', e.target.value)}
+            >
+              <option value="">Tất cả</option>
+              <option value="uptrend">📈 Xu hướng tăng</option>
+              <option value="breakout">🚀 Breakout</option>
+              <option value="heating_up">🔥 Đang nóng</option>
+            </select>
+          </FilterInput>
+        </div>
+      </FilterSection>
+
+      {/* Financial Indicators Section */}
+      <FilterSection title="💰 Tài Chính (Financial)" defaultOpen={true}>
+        <div className="filters-compact">
+          <RangeFilter
+            label="P/E"
+            tooltip="Hệ số giá trên thu nhập: P/E thấp = cổ phiếu rẻ"
+            minValue={filters.peMin}
+            maxValue={filters.peMax}
+            onMinChange={(v) => handleChange('peMin', v)}
+            onMaxChange={(v) => handleChange('peMax', v)}
+            minPlaceholder="0"
+            maxPlaceholder="100"
+          />
+          <RangeFilter
+            label="P/B"
+            tooltip="Hệ số giá trên giá trị sổ sách: P/B < 1 = đang rẻ"
+            minValue={filters.pbMin}
+            maxValue={filters.pbMax}
+            onMinChange={(v) => handleChange('pbMin', v)}
+            onMaxChange={(v) => handleChange('pbMax', v)}
+          />
+          <RangeFilter
+            label="ROE %"
+            tooltip="Tỷ suất lợi nhuận trên vốn chủ sở hữu"
+            minValue={filters.roeMin}
+            maxValue={filters.roeMax}
+            onMinChange={(v) => handleChange('roeMin', v)}
+            onMaxChange={(v) => handleChange('roeMax', v)}
+          />
+          <FilterInput label="Tăng trưởng DT %" tooltip="Tăng trưởng doanh thu năm qua">
+            <input
+              type="number"
+              className="form-input"
+              placeholder="Tối thiểu"
+              value={filters.revenueGrowthMin ?? ''}
+              onChange={(e) => handleChange('revenueGrowthMin', e.target.value ? parseFloat(e.target.value) : undefined)}
+            />
+          </FilterInput>
+          <FilterInput label="Tăng trưởng LN %" tooltip="Tăng trưởng lợi nhuận quý gần nhất">
+            <input
+              type="number"
+              className="form-input"
+              placeholder="Tối thiểu"
+              value={filters.npatGrowthMin ?? ''}
+              onChange={(e) => handleChange('npatGrowthMin', e.target.value ? parseFloat(e.target.value) : undefined)}
+            />
+          </FilterInput>
+          <FilterInput label="Biên LN ròng %" tooltip="Biên lợi nhuận ròng trên doanh thu">
+            <input
+              type="number"
+              className="form-input"
+              placeholder="Tối thiểu"
+              value={filters.netMarginMin ?? ''}
+              onChange={(e) => handleChange('netMarginMin', e.target.value ? parseFloat(e.target.value) : undefined)}
+            />
+          </FilterInput>
+        </div>
+      </FilterSection>
 
       <div className="filters-actions">
         <button className="btn btn-primary" onClick={onApply}>
@@ -241,6 +467,7 @@ function FiltersPanel({ filters, onFiltersChange, onApply, onClear }: FiltersPan
     </div>
   );
 }
+
 
 // ============================================
 // Stock Table Component
@@ -345,14 +572,41 @@ function StockScreener() {
     setError(null);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/stocks?` + new URLSearchParams({
-        ...(currentFilters.exchange ? { exchange: currentFilters.exchange } : {}),
-        ...(currentFilters.peMin !== undefined ? { pe_min: String(currentFilters.peMin) } : {}),
-        ...(currentFilters.peMax !== undefined ? { pe_max: String(currentFilters.peMax) } : {}),
-        ...(currentFilters.roeMin !== undefined ? { roe_min: String(currentFilters.roeMin) } : {}),
-        ...(currentFilters.search ? { search: currentFilters.search } : {}),
-        page_size: '100',
-      }));
+      // Build query params for comprehensive screener
+      const params = new URLSearchParams();
+
+      // Basic filters
+      if (currentFilters.exchange) params.set('exchange', currentFilters.exchange);
+      if (currentFilters.search) params.set('search', currentFilters.search);
+
+      // General metrics
+      if (currentFilters.marketCapMin !== undefined) params.set('market_cap_min', String(currentFilters.marketCapMin));
+      if (currentFilters.marketCapMax !== undefined) params.set('market_cap_max', String(currentFilters.marketCapMax));
+      if (currentFilters.priceMin !== undefined) params.set('price_min', String(currentFilters.priceMin));
+      if (currentFilters.priceMax !== undefined) params.set('price_max', String(currentFilters.priceMax));
+      if (currentFilters.adtvValueMin !== undefined) params.set('adtv_value_min', String(currentFilters.adtvValueMin));
+
+      // Technical signals
+      if (currentFilters.rsiMin !== undefined) params.set('rsi_min', String(currentFilters.rsiMin));
+      if (currentFilters.rsiMax !== undefined) params.set('rsi_max', String(currentFilters.rsiMax));
+      if (currentFilters.rsMin !== undefined) params.set('rs_min', String(currentFilters.rsMin));
+      if (currentFilters.priceVsSma20Min !== undefined) params.set('price_vs_sma20_min', String(currentFilters.priceVsSma20Min));
+      if (currentFilters.stockTrend) params.set('stock_trend', currentFilters.stockTrend);
+      if (currentFilters.priceReturn1mMin !== undefined) params.set('price_return_1m_min', String(currentFilters.priceReturn1mMin));
+
+      // Financial indicators
+      if (currentFilters.peMin !== undefined) params.set('pe_min', String(currentFilters.peMin));
+      if (currentFilters.peMax !== undefined) params.set('pe_max', String(currentFilters.peMax));
+      if (currentFilters.pbMin !== undefined) params.set('pb_min', String(currentFilters.pbMin));
+      if (currentFilters.pbMax !== undefined) params.set('pb_max', String(currentFilters.pbMax));
+      if (currentFilters.roeMin !== undefined) params.set('roe_min', String(currentFilters.roeMin));
+      if (currentFilters.revenueGrowthMin !== undefined) params.set('revenue_growth_min', String(currentFilters.revenueGrowthMin));
+      if (currentFilters.npatGrowthMin !== undefined) params.set('npat_growth_min', String(currentFilters.npatGrowthMin));
+      if (currentFilters.netMarginMin !== undefined) params.set('net_margin_min', String(currentFilters.netMarginMin));
+
+      params.set('page_size', '100');
+
+      const response = await fetch(`${API_BASE_URL}/api/stocks/screener?${params.toString()}`);
 
       if (!response.ok) {
         throw new Error(`API Error: ${response.status}`);
@@ -360,7 +614,7 @@ function StockScreener() {
 
       const data = await response.json();
 
-      // Map backend response to frontend Stock format
+      // Map backend response to frontend Stock format (with comprehensive data)
       const mappedStocks: Stock[] = data.stocks.map((s: any) => ({
         symbol: s.symbol,
         companyName: s.company_name || s.symbol,
@@ -377,7 +631,18 @@ function StockScreener() {
         roe: s.roe ? s.roe * 100 : undefined, // Convert to percentage
         eps: s.eps,
         isActive: true,
-        updatedAt: s.updated_at,
+        updatedAt: s.screener_updated_at || s.updated_at,
+        // Additional screener data
+        rsi: s.rsi,
+        macdHistogram: s.macd_histogram,
+        stockRating: s.stock_rating,
+        relativeStrength: s.relative_strength,
+        grossMargin: s.gross_margin,
+        netMargin: s.net_margin,
+        revenueGrowth: s.revenue_growth_1y,
+        npatGrowth: s.npat_growth,
+        uptrend: s.uptrend,
+        breakout: s.breakout,
       }));
 
       setStocks(mappedStocks);
@@ -477,7 +742,7 @@ function StockComparison() {
     }
 
     try {
-      const res = await fetch(`http://localhost:8000/api/stocks?search=${query}&page_size=10`);
+      const res = await fetch(`${API_BASE_URL}/api/stocks?search=${query}&page_size=10`);
       if (res.ok) {
         const data = await res.json();
         const mapped = data.stocks.map((s: any) => ({
@@ -527,6 +792,7 @@ function StockComparison() {
     { key: 'pe', label: t('table.pe'), format: (v: number) => v ? formatNumber(v, 1) : '-' },
     { key: 'pb', label: t('table.pb'), format: (v: number) => v ? formatNumber(v, 2) : '-' },
     { key: 'roe', label: t('table.roe'), format: (v: number) => v ? `${formatNumber(v, 1)}%` : '-' },
+    { key: 'eps', label: 'EPS', format: (v: number) => v ? formatNumber(v, 0) : '-' },
     { key: 'sector', label: t('table.sector'), format: (v: string) => v || '-' },
   ];
 
@@ -643,7 +909,7 @@ function StockComparison() {
               {selectedStocks.map(stock => (
                 <div key={stock.symbol} className="card" style={{ padding: 'var(--spacing-md)' }}>
                   <div style={{ marginBottom: 'var(--spacing-sm)', fontWeight: 'bold' }}>{stock.symbol}</div>
-                  <PriceChart symbol={stock.symbol} height={200} />
+                  <TradingViewChart symbol={stock.symbol} exchange={stock.exchange} height={300} showToolbar={false} />
                 </div>
               ))}
             </div>
@@ -705,8 +971,8 @@ function DatabaseManager() {
   const fetchStatus = useCallback(async () => {
     try {
       const [dbRes, schedRes] = await Promise.all([
-        fetch('http://localhost:8000/api/database/status'),
-        fetch('http://localhost:8000/api/database/scheduler'),
+        fetch(`${API_BASE_URL}/api/database/status`),
+        fetch(`${API_BASE_URL}/api/database/scheduler`),
       ]);
 
       if (dbRes.ok) {
@@ -732,7 +998,7 @@ function DatabaseManager() {
   const triggerUpdate = async (taskName: string) => {
     setUpdating(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/database/update?task_name=${taskName}`, {
+      const res = await fetch(`${API_BASE_URL}/api/database/update?task_name=${taskName}`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -963,7 +1229,33 @@ function AppContent() {
 
         {activeTab === 'comparison' && <StockComparison />}
 
-        {activeTab === 'database' && <DatabaseManager />}
+        {activeTab === 'database' && (
+          <div className="database-tab-container">
+            <div className="tabs-subnav" style={{ marginBottom: 'var(--spacing-md)', display: 'flex', gap: 'var(--spacing-md)', padding: '0 var(--spacing-lg)' }}>
+              {/* Sub-navigation could be here, or just a toggle */}
+            </div>
+
+            {/* Show Data Browser by default, but allow access to Manager */}
+            {/* For now, let's put Manager below Browser or use a toggle. 
+                Let's use a simple toggle state in AppContent or just render DataBrowser 
+                and have a button in it to show "System Status" which opens DatabaseManager modal/section 
+            */}
+
+            <DataBrowser />
+
+            <div style={{ marginTop: 'var(--spacing-xl)', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--spacing-lg)' }}>
+              <h3 onClick={(e) => {
+                const content = e.currentTarget.nextElementSibling;
+                if (content) content.classList.toggle('hidden');
+              }} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                ⚙️ Database System Status & Management (Click to toggle)
+              </h3>
+              <div className="hidden" style={{ marginTop: 'var(--spacing-md)' }}>
+                <DatabaseManager />
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'ai-analysis' && <AIAnalysis />}
       </main>

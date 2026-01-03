@@ -17,6 +17,13 @@
 - Search by **symbol** or **company name**
 - **84+ financial metrics** from vnstock Screener API
 - Real-time **VN30 index tracking**
+- **Filter presets** - save and load custom filter configurations
+
+### 🌐 **Dual Data Sources**
+- Primary: **cophieu68.vn** web scraper (polite rate limiting)
+- Fallback: **vnstock** library
+- Automatic data freshness checking
+- Metrics: P/E, P/B, P/S, ROE, ROA, EPS, debt, assets, cash
 
 ### 📈 **Price Analysis & Charts**
 - Interactive **historical price charts** (Chart.js)
@@ -72,6 +79,11 @@
 ┌────────────────────────▼────────────────────────────────────┐
 │                   Database (SQLite)                         │
 │              data/vnstock_data.db (Persistent)              │
+└─────────────────────────────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                   Data Sources                               │
+│     cophieu68.vn (Primary) │ vnstock API (Fallback)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -305,7 +317,9 @@ vnstock-screener/
 │   ├── main.py                     # FastAPI application
 │   ├── config.py                   # Configuration management
 │   ├── database.py                 # Database operations
-│   ├── vnstock_collector.py        # Data collection from vnstock
+│   ├── cophieu68_collector.py      # 🆕 Primary data source (polite scraper)
+│   ├── vnstock_collector.py        # Fallback data collection
+│   ├── build_initial_database.py   # 🆕 Initial database builder
 │   ├── ai_service.py               # Gemini AI integration
 │   ├── update_scheduler.py         # Automated updates
 │   ├── update_registry.py          # Data freshness tracking
@@ -431,6 +445,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## 🙏 Acknowledgments
 
+- **[cophieu68.vn](https://www.cophieu68.vn/)** - Vietnamese stock market data
 - **[vnstock](https://github.com/thinh-vu/vnstock)** - Vietnamese stock data library
 - **[FastAPI](https://fastapi.tiangolo.com/)** - Modern Python web framework
 - **[React](https://react.dev/)** - UI library

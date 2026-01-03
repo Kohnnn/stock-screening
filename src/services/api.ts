@@ -3,7 +3,8 @@
  * Connects frontend to FastAPI backend
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Empty string default = relative paths (works with nginx proxy in Docker)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // Types matching backend response
 export interface Stock {

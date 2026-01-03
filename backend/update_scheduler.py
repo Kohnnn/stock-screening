@@ -17,6 +17,12 @@ from loguru import logger
 from config import settings
 from database import Database, get_database
 from vnstock_collector import VnStockCollector, get_collector
+# Cophieu68 data source (primary)
+try:
+    from cophieu68_collector import Cophieu68Collector
+    HAS_COPHIEU68 = True
+except ImportError:
+    HAS_COPHIEU68 = False
 
 
 class UpdateType(Enum):
@@ -226,19 +232,66 @@ class UpdateScheduler:
         db: Database,
         collector: VnStockCollector
     ) -> int:
-        """Update screener data (current prices + full metrics)."""
-        logger.info("📊 Updating screener data with FULL metrics...")
+        """Update screener data (current prices + full metrics).
         
-        # Use collect_screener_full for complete 84-metric data
-        prices = await collector.collect_screener_full()
+        Uses cophieu68.vn as primary data source (super politely),
+        with vnstock as fallback if cophieu68 fails.
+        """
+        logger.info("📊 Updating screener data...")
+        
+        prices = []
+        
+        # Try cophieu68 first (primary source - super polite)
+        if HAS_COPHIEU68:
+            try:
+                logger.info("🌐 Trying cophieu68.vn (polite scraping)...")
+                cophieu68 = Cophieu68Collector()
+                try:
+                    stocks_data = await cophieu68.collect_all_stocks_data()
+                    
+                    if stocks_data:
+                        prices = [
+                            {
+                                'symbol': symbol,
+                                'current_price': data.get('current_price'),
+                                'volume': data.get('volume'),
+                                'market_cap': data.get('market_cap'),
+                                'pe_ratio': data.get('pe_ratio'),
+                                'pb_ratio': data.get('pb_ratio'),
+                                'eps': data.get('eps'),
+                                'roe': data.get('roe'),
+                                'roa': data.get('roa'),
+                                'book_value': data.get('book_value'),
+                                'ps_ratio': data.get('ps_ratio'),
+                                'total_debt': data.get('total_debt'),
+                                'owner_equity': data.get('owner_equity'),
+                                'total_assets': data.get('total_assets'),
+                                'debt_to_equity': data.get('debt_to_equity'),
+                                'cash': data.get('cash'),
+                                'foreign_ownership': data.get('foreign_ownership'),
+                                'company_name': data.get('company_name'),
+                                'data_source': 'cophieu68',
+                            }
+                            for symbol, data in stocks_data.items()
+                        ]
+                        logger.info(f"✅ cophieu68: collected {len(prices)} stocks")
+                finally:
+                    await cophieu68.close()
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ cophieu68 failed: {e}")
+        
+        # Fallback to vnstock if cophieu68 didn't work
+        if not prices:
+            logger.info("📊 Using vnstock as fallback...")
+            prices = await collector.collect_screener_full()
+            
+            if not prices:
+                logger.warning("⚠️ Full screener failed, falling back to basic")
+                prices = await collector.collect_screener_data()
         
         if not prices:
-            # Fallback to basic screener data
-            logger.warning("⚠️ Full screener failed, falling back to basic")
-            prices = await collector.collect_screener_data()
-        
-        if not prices:
-            logger.warning("⚠️ No screener data collected")
+            logger.warning("⚠️ No screener data collected from any source")
             return 0
         
         # Upsert stock prices with all metrics

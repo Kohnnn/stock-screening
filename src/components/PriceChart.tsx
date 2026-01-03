@@ -53,7 +53,8 @@ export function PriceChart({ symbol, height = 300, showVolume = false }: PriceCh
             setError(null);
 
             try {
-                const res = await fetch(`http://localhost:8000/api/stocks/${symbol}/history?days=30`);
+                const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+                const res = await fetch(`${API_BASE_URL}/api/stocks/${symbol}/history?days=30`);
                 if (!res.ok) {
                     throw new Error(`Failed to fetch history: ${res.status}`);
                 }

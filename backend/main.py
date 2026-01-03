@@ -193,85 +193,153 @@ async def get_stocks(
 # Note: Static routes must come BEFORE {symbol} routes
 @app.get("/api/stocks/screener")
 async def screen_stocks(
-    # Basic filters
-    exchange: Optional[str] = Query(None, description="Filter by exchange"),
+    # === Basic Filters ===
+    exchange: Optional[str] = Query(None, description="Filter by exchange (HOSE, HNX, UPCOM)"),
     sector: Optional[str] = Query(None, description="Filter by sector"),
-    # Financial filters
-    pe_min: Optional[float] = Query(None, ge=0, description="Minimum P/E ratio"),
-    pe_max: Optional[float] = Query(None, ge=0, description="Maximum P/E ratio"),
-    pb_min: Optional[float] = Query(None, ge=0, description="Minimum P/B ratio"),
-    pb_max: Optional[float] = Query(None, ge=0, description="Maximum P/B ratio"),
-    roe_min: Optional[float] = Query(None, description="Minimum ROE (%)"),
-    market_cap_min: Optional[float] = Query(None, ge=0, description="Minimum market cap"),
-    # Technical filters
-    rsi_min: Optional[float] = Query(None, ge=0, le=100, description="Minimum RSI (0-100)"),
-    rsi_max: Optional[float] = Query(None, ge=0, le=100, description="Maximum RSI (0-100)"),
-    trend: Optional[str] = Query(None, description="Stock trend filter"),
-    adx_min: Optional[float] = Query(None, ge=0, description="Minimum ADX (trend strength)"),
-    # Pagination
+    industry: Optional[str] = Query(None, description="Filter by industry"),
+    search: Optional[str] = Query(None, description="Search by symbol or name"),
+    
+    # === General Metrics (Nhóm Tổng Quan) ===
+    market_cap_min: Optional[float] = Query(None, ge=0, description="Vốn hóa tối thiểu (bn VND)"),
+    market_cap_max: Optional[float] = Query(None, ge=0, description="Vốn hóa tối đa (bn VND)"),
+    price_min: Optional[float] = Query(None, ge=0, description="Giá tối thiểu (VND)"),
+    price_max: Optional[float] = Query(None, ge=0, description="Giá tối đa (VND)"),
+    price_change_min: Optional[float] = Query(None, description="Thay đổi giá % tối thiểu"),
+    price_change_max: Optional[float] = Query(None, description="Thay đổi giá % tối đa"),
+    adtv_value_min: Optional[float] = Query(None, ge=0, description="GTGD trung bình tối thiểu (bn VND)"),
+    volume_vs_adtv_min: Optional[float] = Query(None, description="KLGD/KLGD trung bình tối thiểu (%)"),
+    
+    # === Technical Signals (Nhóm Tín Hiệu Kỹ Thuật) ===
+    stock_rating_min: Optional[float] = Query(None, description="Sức mạnh cổ phiếu tối thiểu"),
+    rs_min: Optional[float] = Query(None, description="RS (Sức mạnh tương quan) tối thiểu"),
+    rs_max: Optional[float] = Query(None, description="RS (Sức mạnh tương quan) tối đa"),
+    rsi_min: Optional[float] = Query(None, ge=0, le=100, description="RSI tối thiểu (0-100)"),
+    rsi_max: Optional[float] = Query(None, ge=0, le=100, description="RSI tối đa (0-100)"),
+    price_vs_sma20_min: Optional[float] = Query(None, description="Giá/SMA20 % tối thiểu"),
+    price_vs_sma20_max: Optional[float] = Query(None, description="Giá/SMA20 % tối đa"),
+    macd_histogram_min: Optional[float] = Query(None, description="MACD Histogram tối thiểu"),
+    stock_trend: Optional[str] = Query(None, description="Xu hướng: uptrend, breakout, heating_up"),
+    price_return_1m_min: Optional[float] = Query(None, description="Tỷ suất lợi nhuận 1 tháng tối thiểu (%)"),
+    price_return_1m_max: Optional[float] = Query(None, description="Tỷ suất lợi nhuận 1 tháng tối đa (%)"),
+    
+    # === Financial Indicators (Nhóm Chỉ Số Tài Chính) ===
+    pe_min: Optional[float] = Query(None, ge=0, description="P/E tối thiểu"),
+    pe_max: Optional[float] = Query(None, ge=0, description="P/E tối đa"),
+    pb_min: Optional[float] = Query(None, ge=0, description="P/B tối thiểu"),
+    pb_max: Optional[float] = Query(None, ge=0, description="P/B tối đa"),
+    roe_min: Optional[float] = Query(None, description="ROE % tối thiểu"),
+    roe_max: Optional[float] = Query(None, description="ROE % tối đa"),
+    revenue_growth_min: Optional[float] = Query(None, description="Tăng trưởng doanh thu % tối thiểu"),
+    npat_growth_min: Optional[float] = Query(None, description="Tăng trưởng LNST % tối thiểu"),
+    net_margin_min: Optional[float] = Query(None, description="Biên LN ròng % tối thiểu"),
+    gross_margin_min: Optional[float] = Query(None, description="Biên LN gộp % tối thiểu"),
+    dividend_yield_min: Optional[float] = Query(None, ge=0, description="Tỷ suất cổ tức % tối thiểu"),
+    
+    # === Pagination ===
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
     """
-    Advanced stock screener with technical indicators.
+    Advanced stock screener with comprehensive filters.
     
-    Technical trend options: 'strong_uptrend', 'uptrend', 'sideways', 'downtrend', 'strong_downtrend'
+    Supports 25+ filter parameters across 3 categories:
+    - General (Tổng Quan): Market Cap, Price, ADTV, Volume
+    - Technical (Kỹ Thuật): RSI, MACD, RS, SMA, Trends
+    - Financial (Tài Chính): P/E, P/B, ROE, Margins, Growth
+    
+    Stock trend options: 'uptrend', 'breakout', 'heating_up'
     """
     db = await get_database()
     
-    # Get stocks with metrics
-    stocks = await db.get_stocks_with_metrics(
+    offset = (page - 1) * page_size
+    
+    # Get stocks with comprehensive screener data
+    stocks = await db.get_stocks_with_screener_data(
+        # Basic
+        exchange=exchange,
+        sector=sector,
+        industry=industry,
+        search=search,
+        # General
+        market_cap_min=market_cap_min,
+        market_cap_max=market_cap_max,
+        price_min=price_min,
+        price_max=price_max,
+        price_change_min=price_change_min,
+        price_change_max=price_change_max,
+        adtv_value_min=adtv_value_min,
+        volume_vs_adtv_min=volume_vs_adtv_min,
+        # Technical
+        stock_rating_min=stock_rating_min,
+        rs_min=rs_min,
+        rs_max=rs_max,
         rsi_min=rsi_min,
         rsi_max=rsi_max,
-        trend=trend,
-        adx_min=adx_min,
-        limit=page_size * page,
+        price_vs_sma20_min=price_vs_sma20_min,
+        price_vs_sma20_max=price_vs_sma20_max,
+        macd_histogram_min=macd_histogram_min,
+        stock_trend=stock_trend,
+        price_return_1m_min=price_return_1m_min,
+        price_return_1m_max=price_return_1m_max,
+        # Financial
+        pe_min=pe_min,
+        pe_max=pe_max,
+        pb_min=pb_min,
+        pb_max=pb_max,
+        roe_min=roe_min,
+        roe_max=roe_max,
+        revenue_growth_min=revenue_growth_min,
+        npat_growth_min=npat_growth_min,
+        net_margin_min=net_margin_min,
+        gross_margin_min=gross_margin_min,
+        dividend_yield_min=dividend_yield_min,
+        # Pagination
+        limit=page_size,
+        offset=offset,
     )
     
-    # Apply additional filters
-    filtered = []
-    for stock in stocks:
-        if exchange and stock.get('exchange') != exchange:
-            continue
-        if sector and stock.get('sector') != sector:
-            continue
-        
-        pe = stock.get('pe_ratio')
-        if pe_min is not None and (pe is None or pe < pe_min):
-            continue
-        if pe_max is not None and (pe is None or pe > pe_max):
-            continue
-        
-        pb = stock.get('pb_ratio')
-        if pb_min is not None and (pb is None or pb < pb_min):
-            continue
-        if pb_max is not None and (pb is None or pb > pb_max):
-            continue
-        
-        roe = stock.get('roe')
-        if roe_min is not None and (roe is None or roe < roe_min):
-            continue
-        
-        market_cap = stock.get('market_cap')
-        if market_cap_min is not None and (market_cap is None or market_cap < market_cap_min):
-            continue
-        
-        filtered.append(stock)
-    
-    # Paginate
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated = filtered[start:end]
+    # Get total count for pagination
+    total = await db.count_stocks_with_screener_data(
+        exchange=exchange,
+        sector=sector,
+        search=search,
+        pe_min=pe_min,
+        pe_max=pe_max,
+        pb_min=pb_min,
+        pb_max=pb_max,
+        roe_min=roe_min,
+        rsi_min=rsi_min,
+        rsi_max=rsi_max,
+        market_cap_min=market_cap_min,
+    )
     
     return {
-        "stocks": paginated,
-        "total": len(filtered),
+        "stocks": stocks,
+        "total": total,
         "page": page,
         "page_size": page_size,
         "filters_applied": {
-            "rsi": {"min": rsi_min, "max": rsi_max},
-            "trend": trend,
-            "adx_min": adx_min,
+            "general": {
+                "market_cap": {"min": market_cap_min, "max": market_cap_max},
+                "price": {"min": price_min, "max": price_max},
+                "price_change": {"min": price_change_min, "max": price_change_max},
+                "adtv_value_min": adtv_value_min,
+            },
+            "technical": {
+                "rsi": {"min": rsi_min, "max": rsi_max},
+                "stock_rating_min": stock_rating_min,
+                "rs": {"min": rs_min, "max": rs_max},
+                "price_vs_sma20": {"min": price_vs_sma20_min, "max": price_vs_sma20_max},
+                "macd_histogram_min": macd_histogram_min,
+                "stock_trend": stock_trend,
+            },
+            "financial": {
+                "pe": {"min": pe_min, "max": pe_max},
+                "pb": {"min": pb_min, "max": pb_max},
+                "roe": {"min": roe_min, "max": roe_max},
+                "margins": {"net_min": net_margin_min, "gross_min": gross_margin_min},
+                "growth": {"revenue_min": revenue_growth_min, "npat_min": npat_growth_min},
+            },
         }
     }
 

@@ -939,6 +939,11 @@ class VnStockCollector:
                     'exchange': row.get('exchange', ''),
                     'industry': row.get('industry', ''),
                     
+                    # Price fields for stock_prices table compatibility
+                    'current_price': self._safe_float(row.get('price_near_realtime')),
+                    'percent_change': self._safe_float(row.get('prev_1d_growth_pct')),
+                    'price_change': None,  # Calculate from percent if needed
+                    
                     # Fundamental Metrics
                     'market_cap': self._safe_float(row.get('market_cap')),
                     'pe_ratio': self._safe_float(row.get('pe')),

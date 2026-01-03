@@ -107,8 +107,11 @@ class Database:
              open_price, high_price, low_price, close_price,
              volume, market_cap, pe_ratio, pb_ratio,
              eps, bvps, roe, roa, revenue, profit,
+             book_value, ps_ratio, total_debt, owner_equity,
+             total_assets, debt_to_equity, equity_to_assets,
+             cash, foreign_ownership, avg_volume_52w, listed_shares,
              data_source, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
         async with self.connection() as db:
@@ -127,11 +130,23 @@ class Database:
                     p.get('pe_ratio'),
                     p.get('pb_ratio'),
                     p.get('eps'),
-                    p.get('bvps'),
+                    p.get('bvps') or p.get('book_value'),  # Alias for compatibility
                     p.get('roe'),
                     p.get('roa'),
                     p.get('revenue'),
                     p.get('profit'),
+                    # Cophieu68 specific fields
+                    p.get('book_value'),
+                    p.get('ps_ratio'),
+                    p.get('total_debt'),
+                    p.get('owner_equity'),
+                    p.get('total_assets'),
+                    p.get('debt_to_equity'),
+                    p.get('equity_to_assets'),
+                    p.get('cash'),
+                    p.get('foreign_ownership'),
+                    p.get('avg_volume_52w'),
+                    p.get('listed_shares'),
                     p.get('data_source', 'vnstock'),
                     datetime.now().isoformat()
                 )
@@ -943,6 +958,324 @@ class Database:
             cursor = await db.execute(query, params)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+    
+    async def get_stocks_with_screener_data(
+        self,
+        # Basic filters
+        exchange: Optional[str] = None,
+        sector: Optional[str] = None,
+        industry: Optional[str] = None,
+        search: Optional[str] = None,
+        # General metrics
+        market_cap_min: Optional[float] = None,
+        market_cap_max: Optional[float] = None,
+        price_min: Optional[float] = None,
+        price_max: Optional[float] = None,
+        price_change_min: Optional[float] = None,
+        price_change_max: Optional[float] = None,
+        adtv_value_min: Optional[float] = None,
+        volume_vs_adtv_min: Optional[float] = None,
+        # Technical signals
+        stock_rating_min: Optional[float] = None,  # Stock Strength
+        rs_min: Optional[float] = None,  # Relative Strength
+        rs_max: Optional[float] = None,
+        rsi_min: Optional[float] = None,
+        rsi_max: Optional[float] = None,
+        price_vs_sma20_min: Optional[float] = None,
+        price_vs_sma20_max: Optional[float] = None,
+        macd_histogram_min: Optional[float] = None,
+        adx_min: Optional[float] = None,
+        stock_trend: Optional[str] = None,  # 'uptrend', 'breakout', etc.
+        price_return_1m_min: Optional[float] = None,
+        price_return_1m_max: Optional[float] = None,
+        price_return_3m_min: Optional[float] = None,
+        # Financial indicators
+        pe_min: Optional[float] = None,
+        pe_max: Optional[float] = None,
+        pb_min: Optional[float] = None,
+        pb_max: Optional[float] = None,
+        roe_min: Optional[float] = None,
+        roe_max: Optional[float] = None,
+        revenue_growth_min: Optional[float] = None,
+        npat_growth_min: Optional[float] = None,
+        net_margin_min: Optional[float] = None,
+        gross_margin_min: Optional[float] = None,
+        dividend_yield_min: Optional[float] = None,
+        # Pagination
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Get comprehensive stock data by joining stocks, stock_prices, and screener_metrics.
+        
+        Returns all metrics needed for advanced screening:
+        - General: market_cap, price, price_change, adtv
+        - Technical: rsi, macd, stock_rating, relative_strength, trends
+        - Financial: pe, pb, roe, margins, growth rates
+        """
+        query = """
+            SELECT 
+                s.symbol,
+                s.company_name,
+                s.exchange,
+                s.sector,
+                s.industry,
+                -- Price data (prefer screener_metrics for fresh data)
+                COALESCE(sm.price_near_realtime, sp.current_price) as current_price,
+                sp.price_change,
+                COALESCE(sm.prev_1d_growth_pct, sp.percent_change) as percent_change,
+                sp.volume,
+                -- General metrics
+                COALESCE(sm.market_cap, sp.market_cap) as market_cap,
+                sm.avg_trading_value_20d as adtv_value,
+                sm.vol_vs_sma20 as volume_vs_adtv,
+                -- Technical signals
+                sm.stock_rating,
+                sm.rel_strength_3m as relative_strength,
+                sm.tc_rs,
+                sm.rsi14 as rsi,
+                sm.rsi14_status,
+                sm.price_vs_sma5,
+                sm.price_vs_sma10,
+                sm.price_vs_sma20,
+                sm.price_vs_sma50,
+                sm.price_vs_sma100,
+                sm.macd_histogram,
+                sm.bolling_band_signal,
+                sm.dmi_signal,
+                sm.uptrend,
+                sm.breakout,
+                sm.price_break_out52_week,
+                sm.heating_up,
+                -- Price performance
+                sm.price_growth_1w,
+                sm.price_growth_1m,
+                sm.prev_1m_growth_pct as price_return_1m,
+                sm.rel_strength_1m as price_return_outperform_1m,
+                sm.prev_1y_growth_pct as price_return_1y,
+                sm.pct_away_from_hist_peak,
+                sm.pct_off_hist_bottom,
+                -- Financial indicators
+                COALESCE(sm.pe_ratio, sp.pe_ratio) as pe_ratio,
+                COALESCE(sm.pb_ratio, sp.pb_ratio) as pb_ratio,
+                COALESCE(sm.roe, sp.roe) as roe,
+                sm.eps,
+                sm.dividend_yield,
+                sm.gross_margin,
+                sm.net_margin,
+                sm.doe as debt_equity,
+                -- Growth metrics
+                sm.revenue_growth_1y,
+                sm.eps_growth_1y,
+                sm.last_quarter_revenue_growth,
+                sm.last_quarter_profit_growth as npat_growth,
+                -- TCBS ratings
+                sm.financial_health,
+                sm.business_model,
+                sm.business_operation,
+                sm.tcbs_recommend,
+                -- Foreign activity
+                sm.foreign_vol_pct,
+                sm.foreign_buysell_20s,
+                -- Metadata
+                sm.updated_at as screener_updated_at
+            FROM stocks s
+            LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
+            LEFT JOIN screener_metrics sm ON s.symbol = sm.symbol
+            WHERE s.is_active = 1
+        """
+        params = []
+        
+        # Basic filters
+        if exchange:
+            query += " AND s.exchange = ?"
+            params.append(exchange)
+        if sector:
+            query += " AND s.sector = ?"
+            params.append(sector)
+        if industry:
+            query += " AND sm.industry LIKE ?"
+            params.append(f"%{industry}%")
+        if search:
+            query += " AND (s.symbol LIKE ? OR s.company_name LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        
+        # General metrics
+        if market_cap_min is not None:
+            query += " AND COALESCE(sm.market_cap, sp.market_cap) >= ?"
+            params.append(market_cap_min)
+        if market_cap_max is not None:
+            query += " AND COALESCE(sm.market_cap, sp.market_cap) <= ?"
+            params.append(market_cap_max)
+        if price_min is not None:
+            query += " AND COALESCE(sm.price_near_realtime, sp.current_price) >= ?"
+            params.append(price_min)
+        if price_max is not None:
+            query += " AND COALESCE(sm.price_near_realtime, sp.current_price) <= ?"
+            params.append(price_max)
+        if price_change_min is not None:
+            query += " AND sm.prev_1d_growth_pct >= ?"
+            params.append(price_change_min)
+        if price_change_max is not None:
+            query += " AND sm.prev_1d_growth_pct <= ?"
+            params.append(price_change_max)
+        if adtv_value_min is not None:
+            query += " AND sm.avg_trading_value_20d >= ?"
+            params.append(adtv_value_min)
+        if volume_vs_adtv_min is not None:
+            query += " AND sm.vol_vs_sma20 >= ?"
+            params.append(volume_vs_adtv_min)
+        
+        # Technical signals
+        if stock_rating_min is not None:
+            query += " AND sm.stock_rating >= ?"
+            params.append(stock_rating_min)
+        if rs_min is not None:
+            query += " AND sm.rel_strength_3m >= ?"
+            params.append(rs_min)
+        if rs_max is not None:
+            query += " AND sm.rel_strength_3m <= ?"
+            params.append(rs_max)
+        if rsi_min is not None:
+            query += " AND sm.rsi14 >= ?"
+            params.append(rsi_min)
+        if rsi_max is not None:
+            query += " AND sm.rsi14 <= ?"
+            params.append(rsi_max)
+        if price_vs_sma20_min is not None:
+            query += " AND sm.price_vs_sma20 >= ?"
+            params.append(price_vs_sma20_min)
+        if price_vs_sma20_max is not None:
+            query += " AND sm.price_vs_sma20 <= ?"
+            params.append(price_vs_sma20_max)
+        if macd_histogram_min is not None:
+            query += " AND sm.macd_histogram >= ?"
+            params.append(macd_histogram_min)
+        if adx_min is not None:
+            # Note: ADX not in screener_metrics, would need stock_metrics table
+            pass
+        if stock_trend == 'uptrend':
+            query += " AND sm.uptrend = 1"
+        elif stock_trend == 'breakout':
+            query += " AND sm.breakout = 1"
+        elif stock_trend == 'heating_up':
+            query += " AND sm.heating_up = 1"
+        if price_return_1m_min is not None:
+            query += " AND sm.prev_1m_growth_pct >= ?"
+            params.append(price_return_1m_min)
+        if price_return_1m_max is not None:
+            query += " AND sm.prev_1m_growth_pct <= ?"
+            params.append(price_return_1m_max)
+        if price_return_3m_min is not None:
+            query += " AND sm.rel_strength_3m >= ?"
+            params.append(price_return_3m_min)
+        
+        # Financial indicators
+        if pe_min is not None:
+            query += " AND COALESCE(sm.pe_ratio, sp.pe_ratio) >= ?"
+            params.append(pe_min)
+        if pe_max is not None:
+            query += " AND COALESCE(sm.pe_ratio, sp.pe_ratio) <= ?"
+            params.append(pe_max)
+        if pb_min is not None:
+            query += " AND COALESCE(sm.pb_ratio, sp.pb_ratio) >= ?"
+            params.append(pb_min)
+        if pb_max is not None:
+            query += " AND COALESCE(sm.pb_ratio, sp.pb_ratio) <= ?"
+            params.append(pb_max)
+        if roe_min is not None:
+            query += " AND COALESCE(sm.roe, sp.roe) >= ?"
+            params.append(roe_min)
+        if roe_max is not None:
+            query += " AND COALESCE(sm.roe, sp.roe) <= ?"
+            params.append(roe_max)
+        if revenue_growth_min is not None:
+            query += " AND sm.revenue_growth_1y >= ?"
+            params.append(revenue_growth_min)
+        if npat_growth_min is not None:
+            query += " AND sm.last_quarter_profit_growth >= ?"
+            params.append(npat_growth_min)
+        if net_margin_min is not None:
+            query += " AND sm.net_margin >= ?"
+            params.append(net_margin_min)
+        if gross_margin_min is not None:
+            query += " AND sm.gross_margin >= ?"
+            params.append(gross_margin_min)
+        if dividend_yield_min is not None:
+            query += " AND sm.dividend_yield >= ?"
+            params.append(dividend_yield_min)
+        
+        query += " ORDER BY COALESCE(sm.market_cap, sp.market_cap) DESC NULLS LAST"
+        query += f" LIMIT {limit} OFFSET {offset}"
+        
+        async with self.connection() as db:
+            cursor = await db.execute(query, params)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    async def count_stocks_with_screener_data(
+        self,
+        exchange: Optional[str] = None,
+        sector: Optional[str] = None,
+        search: Optional[str] = None,
+        # Add same filters as above for accurate count
+        pe_min: Optional[float] = None,
+        pe_max: Optional[float] = None,
+        pb_min: Optional[float] = None,
+        pb_max: Optional[float] = None,
+        roe_min: Optional[float] = None,
+        rsi_min: Optional[float] = None,
+        rsi_max: Optional[float] = None,
+        market_cap_min: Optional[float] = None,
+    ) -> int:
+        """Count stocks matching screener filters."""
+        query = """
+            SELECT COUNT(*) as count
+            FROM stocks s
+            LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
+            LEFT JOIN screener_metrics sm ON s.symbol = sm.symbol
+            WHERE s.is_active = 1
+        """
+        params = []
+        
+        if exchange:
+            query += " AND s.exchange = ?"
+            params.append(exchange)
+        if sector:
+            query += " AND s.sector = ?"
+            params.append(sector)
+        if search:
+            query += " AND (s.symbol LIKE ? OR s.company_name LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        if pe_min is not None:
+            query += " AND COALESCE(sm.pe_ratio, sp.pe_ratio) >= ?"
+            params.append(pe_min)
+        if pe_max is not None:
+            query += " AND COALESCE(sm.pe_ratio, sp.pe_ratio) <= ?"
+            params.append(pe_max)
+        if pb_min is not None:
+            query += " AND COALESCE(sm.pb_ratio, sp.pb_ratio) >= ?"
+            params.append(pb_min)
+        if pb_max is not None:
+            query += " AND COALESCE(sm.pb_ratio, sp.pb_ratio) <= ?"
+            params.append(pb_max)
+        if roe_min is not None:
+            query += " AND COALESCE(sm.roe, sp.roe) >= ?"
+            params.append(roe_min)
+        if rsi_min is not None:
+            query += " AND sm.rsi14 >= ?"
+            params.append(rsi_min)
+        if rsi_max is not None:
+            query += " AND sm.rsi14 <= ?"
+            params.append(rsi_max)
+        if market_cap_min is not None:
+            query += " AND COALESCE(sm.market_cap, sp.market_cap) >= ?"
+            params.append(market_cap_min)
+        
+        async with self.connection() as db:
+            cursor = await db.execute(query, params)
+            row = await cursor.fetchone()
+            return row['count'] if row else 0
     
     # =========================================
     # Shareholders Operations

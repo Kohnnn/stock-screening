@@ -37,7 +37,8 @@ interface AISettingsPanelProps {
 // ============================================
 
 const STORAGE_KEY = 'vnstock_ai_settings';
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Empty string default = relative paths (works with nginx proxy in Docker)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 const DEFAULT_SETTINGS: AISettings = {
     apiKey: '',
@@ -192,17 +193,56 @@ export function AISettingsPanel({ isOpen, onClose, onSettingsSaved }: AISettings
 
                     {/* Model Selection */}
                     <div className="ai-settings-group">
-                        <label htmlFor="model">🤖 Model</label>
-                        <select
-                            id="model"
-                            value={settings.model}
-                            onChange={(e) => handleChange('model', e.target.value)}
-                            className="ai-settings-select"
-                        >
-                            {models.map(model => (
-                                <option key={model.id} value={model.id}>{model.name}</option>
-                            ))}
-                        </select>
+                        <label htmlFor="model">
+                            🤖 Model
+                            <span className="ai-settings-hint">
+                                Select from list or enter a custom model name
+                            </span>
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {/* Check if current model is in the list */}
+                            {models.some(m => m.id === settings.model) ? (
+                                <select
+                                    id="model"
+                                    value={settings.model}
+                                    onChange={(e) => {
+                                        if (e.target.value === '__custom__') {
+                                            handleChange('model', '');
+                                        } else {
+                                            handleChange('model', e.target.value);
+                                        }
+                                    }}
+                                    className="ai-settings-select"
+                                    style={{ flex: 1 }}
+                                >
+                                    {models.map(model => (
+                                        <option key={model.id} value={model.id}>{model.name}</option>
+                                    ))}
+                                    <option value="__custom__">✏️ Enter custom model...</option>
+                                </select>
+                            ) : (
+                                <div style={{ flex: 1, display: 'flex', gap: '8px' }}>
+                                    <input
+                                        type="text"
+                                        id="model"
+                                        value={settings.model}
+                                        onChange={(e) => handleChange('model', e.target.value)}
+                                        placeholder="Enter custom model name (e.g., gemini-2.0-flash)"
+                                        className="ai-settings-input"
+                                        style={{ flex: 1 }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => handleChange('model', DEFAULT_SETTINGS.model)}
+                                        className="ai-settings-btn-secondary"
+                                        style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}
+                                        title="Switch back to dropdown"
+                                    >
+                                        📋 List
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Enable Grounding */}

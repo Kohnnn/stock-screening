@@ -8,7 +8,7 @@
  * - Loading states and error handling
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { AISettingsPanel, useAISettings } from './AISettingsPanel';
 
 // ============================================
@@ -36,11 +36,44 @@ interface AnalysisResult {
     metadata: AnalysisMetadata;
 }
 
+// History item for localStorage
+interface AnalysisHistoryItem {
+    symbol: string;
+    companyName: string;
+    timestamp: string;
+    summary: string; // First 150 chars of analysis
+    fullAnalysis: string;
+    metadata: AnalysisMetadata;
+}
+
+const HISTORY_STORAGE_KEY = 'vnstock-ai-analysis-history';
+const MAX_HISTORY_ITEMS = 20;
+
+// Load history from localStorage
+function loadHistory(): AnalysisHistoryItem[] {
+    try {
+        const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+    } catch {
+        return [];
+    }
+}
+
+// Save history to localStorage
+function saveHistory(history: AnalysisHistoryItem[]): void {
+    try {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(0, MAX_HISTORY_ITEMS)));
+    } catch (e) {
+        console.error('Failed to save history:', e);
+    }
+}
+
 // ============================================
 // Constants
 // ============================================
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Empty string default = relative paths (works with nginx proxy in Docker)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // ============================================
 // Markdown Renderer (Simple)
@@ -132,6 +165,50 @@ export function AIAnalysis() {
     const [error, setError] = useState<string | null>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
 
+    // History state
+    const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
+    const [showHistory, setShowHistory] = useState(false);
+
+    // Load history on mount
+    useEffect(() => {
+        setHistory(loadHistory());
+    }, []);
+
+    // Save analysis to history when completed
+    const addToHistory = useCallback((result: AnalysisResult) => {
+        const newItem: AnalysisHistoryItem = {
+            symbol: result.metadata.symbol,
+            companyName: result.metadata.company_name,
+            timestamp: result.metadata.generated_at,
+            summary: result.analysis.substring(0, 150).replace(/[#*]/g, '') + '...',
+            fullAnalysis: result.analysis,
+            metadata: result.metadata,
+        };
+
+        setHistory(prev => {
+            // Remove duplicate if exists
+            const filtered = prev.filter(h => !(h.symbol === newItem.symbol && h.timestamp === newItem.timestamp));
+            const updated = [newItem, ...filtered].slice(0, MAX_HISTORY_ITEMS);
+            saveHistory(updated);
+            return updated;
+        });
+    }, []);
+
+    // Load analysis from history
+    const loadFromHistory = useCallback((item: AnalysisHistoryItem) => {
+        setAnalysisResult({
+            analysis: item.fullAnalysis,
+            metadata: item.metadata,
+        });
+        setShowHistory(false);
+    }, []);
+
+    // Clear all history
+    const clearHistory = useCallback(() => {
+        setHistory([]);
+        localStorage.removeItem(HISTORY_STORAGE_KEY);
+    }, []);
+
     // Search for stocks
     const searchStocks = useCallback(async (query: string) => {
         if (!query || query.length < 1) {
@@ -209,10 +286,12 @@ export function AIAnalysis() {
             }
 
             if (data.success) {
-                setAnalysisResult({
+                const result = {
                     analysis: data.analysis,
                     metadata: data.metadata,
-                });
+                };
+                setAnalysisResult(result);
+                addToHistory(result); // Save to history
             } else {
                 throw new Error(data.message || 'Analysis failed');
             }
@@ -240,14 +319,57 @@ export function AIAnalysis() {
                     <h1>AI Stock Analysis</h1>
                     <span className="ai-analysis-badge">Powered by Gemini</span>
                 </div>
-                <button
-                    className="ai-analysis-settings-btn"
-                    onClick={() => setSettingsOpen(true)}
-                    title="AI Settings"
-                >
-                    ⚙️
-                </button>
+                <div className="ai-analysis-header-actions">
+                    <button
+                        className={`ai-analysis-history-btn ${showHistory ? 'active' : ''}`}
+                        onClick={() => setShowHistory(!showHistory)}
+                        title="Analysis History"
+                    >
+                        📜 {history.length > 0 && <span className="history-count">{history.length}</span>}
+                    </button>
+                    <button
+                        className="ai-analysis-settings-btn"
+                        onClick={() => setSettingsOpen(true)}
+                        title="AI Settings"
+                    >
+                        ⚙️
+                    </button>
+                </div>
             </div>
+
+            {/* History Panel */}
+            {showHistory && history.length > 0 && (
+                <div className="ai-analysis-history-panel">
+                    <div className="ai-analysis-history-header">
+                        <h4>📜 Lịch sử phân tích</h4>
+                        <button onClick={clearHistory} className="ai-analysis-clear-history">
+                            🗑️ Xóa tất cả
+                        </button>
+                    </div>
+                    <div className="ai-analysis-history-list">
+                        {history.map((item, index) => (
+                            <div
+                                key={`${item.symbol}-${item.timestamp}`}
+                                className="ai-analysis-history-item"
+                                onClick={() => loadFromHistory(item)}
+                            >
+                                <div className="history-item-header">
+                                    <span className="history-item-symbol">{item.symbol}</span>
+                                    <span className="history-item-time">
+                                        {new Date(item.timestamp).toLocaleString('vi-VN', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit'
+                                        })}
+                                    </span>
+                                </div>
+                                <div className="history-item-name">{item.companyName}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Search Section */}
             <div className="ai-analysis-search-section">

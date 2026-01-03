@@ -263,11 +263,12 @@ export function LanguageProvider({ children }: LanguageProviderProps) {
     const formatCurrency = useCallback((value: number): string => {
         if (value === null || value === undefined || isNaN(value)) return '-';
 
-        // Format as plain number with thousands separator (e.g., 12.500 instead of 12 ₫)
+        // Format as plain number with thousands separator (e.g., 29,500)
+        // Prices from API are already in VND, no conversion needed
         return new Intl.NumberFormat(language === 'vi' ? 'vi-VN' : 'en-US', {
             minimumFractionDigits: 0,
             maximumFractionDigits: 0,
-        }).format(value * 1000); // Multiply by 1000 since prices are in 1000 VND units
+        }).format(value);
     }, [language]);
 
     const formatNumber = useCallback((value: number, decimals = 2): string => {
