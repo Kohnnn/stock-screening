@@ -38,10 +38,16 @@ export function TradingViewChart({
 
     // Map exchange to TradingView prefix
     const getTvSymbol = () => {
-        const exchangePrefix = exchange?.toUpperCase() || 'HOSE';
-        // TradingView uses exchange prefixes for Vietnam stocks
-        // HOSE -> HOSE:VCB, HNX -> HNX:ACB, UPCOM -> UPCOM:ABC
-        return `${exchangePrefix}:${symbol}`;
+        const exchangeUpper = exchange?.toUpperCase() || 'HOSE';
+        // TradingView uses different prefixes for Vietnam stocks:
+        // HOSE -> HSX:VCB (not HOSE:VCB)
+        // HNX -> HNX:ACB
+        // UPCOM -> UPCOM:ABC
+        let tvExchange = exchangeUpper;
+        if (exchangeUpper === 'HOSE') {
+            tvExchange = 'HSX';
+        }
+        return `${tvExchange}:${symbol}`;
     };
 
     // Check if symbol is likely supported by TradingView

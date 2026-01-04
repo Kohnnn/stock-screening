@@ -31,6 +31,12 @@ const translations: Record<Language, Record<string, string>> = {
         'nav.database': 'Cơ sở dữ liệu',
         'nav.settings': 'Cài đặt',
 
+        // Tabs
+        'tabs.screener': 'Sàng lọc',
+        'tabs.comparison': 'So sánh',
+        'tabs.database': 'Cơ sở dữ liệu',
+        'tabs.aiAnalysis': 'Phân tích AI',
+
         // Screener
         'screener.title': 'Sàng lọc cổ phiếu',
         'screener.filters': 'Bộ lọc',
@@ -83,6 +89,8 @@ const translations: Record<Language, Record<string, string>> = {
         // Comparison
         'comparison.title': 'So sánh cổ phiếu',
         'comparison.select': 'Chọn cổ phiếu để so sánh',
+        'comparison.addStock': 'Thêm cổ phiếu để so sánh...',
+        'comparison.metric': 'Chỉ số',
         'comparison.max': 'Tối đa 5 cổ phiếu',
         'comparison.clear': 'Xóa tất cả',
 
@@ -133,6 +141,12 @@ const translations: Record<Language, Record<string, string>> = {
         'nav.comparison': 'Comparison',
         'nav.database': 'Database',
         'nav.settings': 'Settings',
+
+        // Tabs
+        'tabs.screener': 'Screener',
+        'tabs.comparison': 'Comparison',
+        'tabs.database': 'Database',
+        'tabs.aiAnalysis': 'AI Analysis',
 
         // Screener
         'screener.title': 'Stock Screener',
@@ -186,6 +200,8 @@ const translations: Record<Language, Record<string, string>> = {
         // Comparison
         'comparison.title': 'Stock Comparison',
         'comparison.select': 'Select stocks to compare',
+        'comparison.addStock': 'Add stock to compare...',
+        'comparison.metric': 'Metric',
         'comparison.max': 'Maximum 5 stocks',
         'comparison.clear': 'Clear All',
 

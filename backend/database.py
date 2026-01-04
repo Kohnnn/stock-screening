@@ -226,6 +226,14 @@ class Database:
                 sp.roe,
                 sp.roa,
                 sp.eps,
+                sp.revenue,
+                sp.profit,
+                sp.total_assets,
+                sp.total_debt,
+                sp.owner_equity,
+                sp.cash,
+                sp.debt_to_equity,
+                sp.foreign_ownership,
                 sp.updated_at
             FROM stocks s
             LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
@@ -308,18 +316,65 @@ class Database:
             return [row['symbol'] for row in rows]
     
     async def get_sectors(self) -> List[str]:
-        """Get list of unique sectors."""
-        query = """
-            SELECT DISTINCT sector FROM stocks 
-            WHERE sector IS NOT NULL AND sector != ''
-            ORDER BY sector
-        """
+        """Get list of unique sectors from stocks or industry_flow."""
+        async with self.connection() as db:
+            # First try to get sectors from stocks table
+            cursor = await db.execute("""
+                SELECT DISTINCT sector FROM stocks 
+                WHERE sector IS NOT NULL AND sector != ''
+                ORDER BY sector
+            """)
+            rows = await cursor.fetchall()
+            sectors = [row['sector'] for row in rows]
+            
+            # If no sectors in stocks, get industry names from industry_flow
+            if not sectors:
+                cursor = await db.execute("""
+                    SELECT DISTINCT industry_name FROM industry_flow
+                    WHERE industry_name IS NOT NULL AND industry_name != ''
+                    ORDER BY cashflow DESC
+                    LIMIT 20
+                """)
+                rows = await cursor.fetchall()
+                sectors = [row['industry_name'] for row in rows]
+            
+            return sectors
+    
+    async def get_stocks_by_sector(self, sector: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get top stocks in a sector by market cap/volume."""
+        # Handle special VN30 "sector" which is a list index
+        if sector == 'VN30':
+            query = """
+                SELECT 
+                    s.symbol, s.company_name, s.sector, s.industry,
+                    sp.current_price, sp.price_change, sp.percent_change, sp.volume, sp.market_cap
+                FROM stocks s
+                LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
+                WHERE s.is_vn30 = 1
+                ORDER BY sp.market_cap DESC
+                LIMIT ?
+            """
+        else:
+            query = """
+                SELECT 
+                    s.symbol, s.company_name, s.sector, s.industry,
+                    sp.current_price, sp.price_change, sp.percent_change, sp.volume, sp.market_cap
+                FROM stocks s
+                LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
+                WHERE s.sector = ?
+                ORDER BY sp.market_cap DESC
+                LIMIT ?
+            """
         
         async with self.connection() as db:
-            cursor = await db.execute(query)
+            if sector == 'VN30':
+                cursor = await db.execute(query, (limit,))
+            else:
+                cursor = await db.execute(query, (sector, limit))
+                
             rows = await cursor.fetchall()
-            return [row['sector'] for row in rows]
-    
+            return [dict(row) for row in rows]
+            
     async def get_stocks_with_prices(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get stocks that have price data (for priority updates)."""
         query = """
@@ -1001,6 +1056,9 @@ class Database:
         net_margin_min: Optional[float] = None,
         gross_margin_min: Optional[float] = None,
         dividend_yield_min: Optional[float] = None,
+        # Ordering
+        sort_by: Optional[str] = 'market_cap',
+        order: Optional[str] = 'desc',
         # Pagination
         limit: int = 100,
         offset: int = 0
@@ -1031,20 +1089,27 @@ class Database:
                 sm.vol_vs_sma20 as volume_vs_adtv,
                 -- Technical signals
                 sm.stock_rating,
-                sm.rel_strength_3m as relative_strength,
+                COALESCE(stm.rel_strength_1m, sm.rel_strength_3m) as relative_strength,
                 sm.tc_rs,
-                sm.rsi14 as rsi,
+                COALESCE(stm.rsi_14, sm.rsi14) as rsi,
                 sm.rsi14_status,
                 sm.price_vs_sma5,
                 sm.price_vs_sma10,
-                sm.price_vs_sma20,
+                COALESCE(stm.price_vs_ema20, sm.price_vs_sma20) as price_vs_sma20,
                 sm.price_vs_sma50,
                 sm.price_vs_sma100,
-                sm.macd_histogram,
+                COALESCE(stm.macd_histogram, sm.macd_histogram) as macd_histogram,
+                stm.macd,
+                stm.macd_signal,
+                stm.adx,
+                stm.stock_trend,
+                
+                -- Signals (Mapped)
+                CASE WHEN stm.stock_trend IN ('uptrend', 'strong_uptrend') THEN 1 ELSE 0 END as uptrend,
+                CASE WHEN stm.stock_trend = 'breakout' THEN 1 ELSE 0 END as breakout,
+                
                 sm.bolling_band_signal,
                 sm.dmi_signal,
-                sm.uptrend,
-                sm.breakout,
                 sm.price_break_out52_week,
                 sm.heating_up,
                 -- Price performance
@@ -1060,9 +1125,17 @@ class Database:
                 COALESCE(sm.pb_ratio, sp.pb_ratio) as pb_ratio,
                 COALESCE(sm.roe, sp.roe) as roe,
                 sm.eps,
+                sp.revenue,
+                sp.profit,
+                sp.total_assets,
+                sp.total_debt,
+                sp.owner_equity,
+                sp.cash,
+                sp.debt_to_equity,
+                sp.foreign_ownership,
                 sm.dividend_yield,
-                sm.gross_margin,
-                sm.net_margin,
+                COALESCE(sm.gross_margin, CASE WHEN sp.revenue > 0 THEN ((sp.revenue - sp.profit) / sp.revenue * 100) ELSE NULL END) as gross_margin, -- Rough estimate if missing
+                COALESCE(sm.net_margin, CASE WHEN sp.revenue > 0 THEN (sp.profit / sp.revenue * 100) ELSE NULL END) as net_margin,
                 sm.doe as debt_equity,
                 -- Growth metrics
                 sm.revenue_growth_1y,
@@ -1082,6 +1155,7 @@ class Database:
             FROM stocks s
             LEFT JOIN stock_prices sp ON s.symbol = sp.symbol
             LEFT JOIN screener_metrics sm ON s.symbol = sm.symbol
+            LEFT JOIN stock_metrics stm ON s.symbol = stm.symbol
             WHERE s.is_active = 1
         """
         params = []
@@ -1205,7 +1279,27 @@ class Database:
             query += " AND sm.dividend_yield >= ?"
             params.append(dividend_yield_min)
         
-        query += " ORDER BY COALESCE(sm.market_cap, sp.market_cap) DESC NULLS LAST"
+        # Sort Mapping
+        sort_map = {
+            'market_cap': 'COALESCE(sm.market_cap, sp.market_cap)',
+            'current_price': 'COALESCE(sm.price_near_realtime, sp.current_price)',
+            'percent_change': 'COALESCE(sm.prev_1d_growth_pct, sp.percent_change)',
+            'volume': 'sp.volume',
+            'pe': 'COALESCE(sm.pe_ratio, sp.pe_ratio)',
+            'pb': 'COALESCE(sm.pb_ratio, sp.pb_ratio)',
+            'roe': 'COALESCE(sm.roe, sp.roe)',
+            'rsi': 'COALESCE(stm.rsi_14, sm.rsi14)',
+            'relativeStrength': 'sm.tc_rs', # RS Rating
+            'rsRating': 'sm.tc_rs', 
+            'stockRating': 'sm.stock_rating',
+            'revenueGrowth': 'sm.revenue_growth_1y',
+            'netMargin': 'sm.net_margin'
+        }
+        
+        sort_col = sort_map.get(sort_by, sort_map['market_cap'])
+        sort_dir = 'ASC' if order == 'asc' else 'DESC'
+        
+        query += f" ORDER BY {sort_col} {sort_dir} NULLS LAST"
         query += f" LIMIT {limit} OFFSET {offset}"
         
         async with self.connection() as db:
@@ -1469,6 +1563,175 @@ class Database:
             cursor = await db.execute(query, params)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+    
+    # =========================================
+    # Industry Flow Operations (from scrapers)
+    # =========================================
+    
+    async def upsert_industry_flow(self, flow_data: List[Dict[str, Any]]) -> int:
+        """Insert or update industry flow data from web scrapers."""
+        if not flow_data:
+            return 0
+        
+        # Use today's date for uniqueness
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        query = """
+            INSERT OR REPLACE INTO industry_flow 
+            (industry_name, industry_name_en, cashflow, rate_of_change,
+             rs_short, rs_mid, rs_relative, 
+             net_buy_volume, net_buy_value, sector_performance,
+             source, date_collected, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        async with self.connection() as db:
+            params = [
+                (
+                    d.get('industry_name'),
+                    d.get('industry_name_en'),
+                    d.get('cashflow'),
+                    d.get('rate_of_change'),
+                    d.get('rs_short'),
+                    d.get('rs_mid'),
+                    d.get('rs_relative'),
+                    d.get('net_buy_volume'),
+                    d.get('net_buy_value'),
+                    d.get('sector_performance'),
+                    d.get('source', 'sieucophieu'),
+                    today,
+                    d.get('timestamp', datetime.now().isoformat()),
+                )
+                for d in flow_data
+            ]
+            await db.executemany(query, params)
+            await db.commit()
+            
+            logger.info(f"📥 Upserted {len(flow_data)} industry flow records")
+            return len(flow_data)
+    
+    async def get_industry_flow(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get latest industry flow data."""
+        query = """
+            SELECT * FROM industry_flow
+            WHERE date_collected = (SELECT MAX(date_collected) FROM industry_flow)
+            ORDER BY cashflow DESC
+            LIMIT ?
+        """
+        
+        async with self.connection() as db:
+            cursor = await db.execute(query, (limit,))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # =========================================
+    # Financial Data Operations (BCTC)
+    # =========================================
+
+    async def upsert_financial_data(self, data: Dict[str, Any]) -> int:
+        """
+        Process and upsert nested financial data into financial_metrics table.
+        Merges Income, Balance Sheet, and Ratios by period (year).
+        """
+        symbol = data.get('symbol')
+        if not symbol:
+            return 0
+        
+        # Merge data by period
+        merged_by_period = {}
+        
+        def merge_items(items: List[Dict[str, Any]]):
+            if not items: return
+            for item in items:
+                # Normalize period (year)
+                raw_period = str(item.get('period', ''))
+                if not raw_period or raw_period == 'nan':
+                    continue
+                
+                # Use only year part if it's a date
+                period = raw_period.split('-')[0]
+                
+                if period not in merged_by_period:
+                    merged_by_period[period] = {'symbol': symbol, 'period': period}
+                
+                # Merge fields (skip identifiers)
+                for k, v in item.items():
+                    if k not in ['symbol', 'period', 'period_type']:
+                        merged_by_period[period][k] = v
+
+        merge_items(data.get('income_statement', []))
+        merge_items(data.get('balance_sheet', []))
+        merge_items(data.get('ratios', []))
+        
+        if not merged_by_period:
+            return 0
+
+        # Upsert into database
+        rows = list(merged_by_period.values())
+        
+        query = """
+            INSERT OR REPLACE INTO financial_metrics (
+                symbol, period,
+                revenue, gross_profit, operating_profit, net_profit,
+                total_assets, total_liabilities, total_equity, 
+                current_assets, current_liabilities, cash_and_equivalents,
+                pe_ratio, pb_ratio, roe, roa,
+                gross_margin, net_margin, debt_to_equity,
+                earnings_per_share, book_value_per_share,
+                updated_at
+            ) VALUES (
+                ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?
+            )
+        """
+        
+        params = []
+        now = datetime.now().isoformat()
+        
+        for r in rows:
+            # Helper to get float safely
+            def get_val(key):
+                val = r.get(key)
+                if val is None or val == '': return None
+                try: return float(val)
+                except: return None
+            
+            params.append((
+                r.get('symbol'),
+                r.get('period'),
+                get_val('revenue'),
+                get_val('gross_profit'),
+                get_val('operating_profit'),
+                get_val('net_profit'),
+                get_val('total_assets'),
+                get_val('total_liabilities'),
+                get_val('total_equity'),
+                get_val('current_assets'),
+                get_val('current_liabilities'),
+                get_val('cash_and_equivalents'),
+                get_val('priceToEarning'),      
+                get_val('priceToBook'),         
+                get_val('roe'),
+                get_val('roa'),
+                get_val('grossMargin'),
+                get_val('netMargin'),
+                get_val('debtToEquity'),
+                get_val('eps'),
+                get_val('bookValuePerShare'),
+                now
+            ))
+
+        async with self.connection() as db:
+            await db.executemany(query, params)
+            await db.commit()
+            
+        return len(rows)
 
 
 # Global database instance

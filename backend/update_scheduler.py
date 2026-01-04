@@ -139,8 +139,28 @@ class UpdateScheduler:
             update_type=UpdateType.FINANCIAL_DATA,
             frequency=UpdateFrequency.WEEKLY,
             schedule_time=settings.WEEKLY_UPDATE_TIME,
-            priority=4,
+            priority=2,
             max_runtime_minutes=180,
+        )
+        
+        # Intraday price updates (during market hours)
+        self.tasks["intraday_prices"] = UpdateTask(
+            name="Intraday Price Update",
+            update_type=UpdateType.SCREENER_DATA,
+            frequency=UpdateFrequency.HOURLY,
+            schedule_time="09:30",  # First run at market open
+            priority=1,
+            max_runtime_minutes=10,
+        )
+        
+        # Market indices update (every 5 minutes during market hours)
+        self.tasks["market_indices"] = UpdateTask(
+            name="Market Indices Update",
+            update_type=UpdateType.SCREENER_DATA,
+            frequency=UpdateFrequency.HOURLY,
+            schedule_time="09:15",
+            priority=1,
+            max_runtime_minutes=5,
         )
     
     def is_market_hours(self) -> bool:
@@ -241,6 +261,20 @@ class UpdateScheduler:
         
         prices = []
         
+        # 1. Update Full Screener Metrics (TCBS) - CRITICAL for Screener
+        # We do this independently to ensure we have the 84 columns even if we use cophieu68 for prices
+        try:
+            full_metrics = await collector.collect_screener_full()
+            if full_metrics:
+                await db.upsert_screener_metrics(full_metrics)
+                logger.info(f"✅ Upserted screener metrics for {len(full_metrics)} stocks")
+                # If we have this data, we can also use it as the price source if not using cophieu68
+                if not prices: 
+                    prices = full_metrics
+        except Exception as e:
+            logger.error(f"❌ Failed to update screener metrics: {e}")
+
+        # 2. Update Prices (Cophieu68)
         # Try cophieu68 first (primary source - super polite)
         if HAS_COPHIEU68:
             try:
@@ -296,6 +330,10 @@ class UpdateScheduler:
         
         # Upsert stock prices with all metrics
         count = await db.upsert_stock_prices(prices)
+        
+        # KEY FIX: Also upsert the detailed screener metrics (84 columns)
+        # prices list contains full screener data when collected via collect_screener_full
+        await db.upsert_screener_metrics(prices)
         
         # Also update stock listings from screener
         stocks = [
@@ -383,8 +421,11 @@ class UpdateScheduler:
                 break
             
             financial = await collector.collect_financial_data(symbol)
-            if financial.get('ratios') or financial.get('balance_sheet'):
-                count += 1
+            if financial:  # Check if we got any data
+                # Upsert into financial_metrics table
+                rows_saved = await db.upsert_financial_data(financial)
+                if rows_saved > 0:
+                    count += 1
         
         return count
     

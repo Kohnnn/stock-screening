@@ -155,7 +155,7 @@ function renderMarkdown(text: string): React.ReactNode {
 // ============================================
 
 export function AIAnalysis() {
-    const settings = useAISettings();
+    const { settings } = useAISettings();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<Stock[]>([]);
     const [selectedStock, setSelectedStock] = useState<Stock | null>(null);

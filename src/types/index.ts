@@ -5,7 +5,7 @@
 export interface Stock {
     symbol: string;
     companyName: string;
-    exchange: 'HOSE' | 'HNX' | 'UPCOM';
+    exchange: string;
     sector?: string;
     industry?: string;
     currentPrice?: number;
@@ -19,54 +19,73 @@ export interface Stock {
     eps?: number;
     isActive: boolean;
     updatedAt?: string;
-}
 
-export interface FinancialMetrics {
-    symbol: string;
-    period: string;
-    peRatio?: number;
-    pbRatio?: number;
-    psRatio?: number;
-    marketCap?: number;
-    roe?: number;
-    roa?: number;
-    debtToEquity?: number;
-    currentRatio?: number;
-    revenueGrowthYoy?: number;
-    npatGrowthYoy?: number;
-}
+    // Technical Signals
+    rsi?: number;
+    macdHistogram?: number;
+    stockRating?: number;
+    relativeStrength?: number;
+    uptrend?: number | boolean; // support both
+    breakout?: number | boolean;
 
-export interface PriceHistory {
-    symbol: string;
-    date: string;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    adjustedClose?: number;
+    // Financial Details
+    grossMargin?: number;
+    netMargin?: number;
+    revenueGrowth?: number;
+    npatGrowth?: number;
+    dividendYield?: number;
 }
-
-// ============================================
-// Filter Types
-// ============================================
 
 export interface StockFilters {
+    // Basic filters
     exchange?: 'HOSE' | 'HNX' | 'UPCOM' | '';
     sector?: string;
+    industry?: string;
+    search?: string;
+
+    // General metrics
+    marketCapMin?: number;
+    marketCapMax?: number;
+    priceMin?: number;
+    priceMax?: number;
+    priceChangeMin?: number;
+    priceChangeMax?: number;
+    adtvValueMin?: number;
+    volumeVsAdtvMin?: number;
+
+    // Technical signals
+    stockRatingMin?: number;
+    rsMin?: number;
+    rsMax?: number;
+    rsiMin?: number;
+    rsiMax?: number;
+    priceVsSma20Min?: number;
+    priceVsSma20Max?: number;
+    macdHistogramMin?: number;
+    stockTrend?: string;
+    priceReturn1mMin?: number;
+    priceReturn1mMax?: number;
+
+    // Financial indicators
     peMin?: number;
     peMax?: number;
     pbMin?: number;
     pbMax?: number;
     roeMin?: number;
-    marketCapMin?: number;
-    marketCapMax?: number;
-    // Technical filters
-    rsiMin?: number;
-    rsiMax?: number;
-    trend?: string;
-    adxMin?: number;
-    search?: string;
+    roeMax?: number;
+    revenueGrowthMin?: number;
+    npatGrowthMin?: number;
+    netMarginMin?: number;
+    grossMarginMin?: number;
+    dividendYieldMin?: number;
+
+    // Additional value metrics
+    epsMin?: number;
+    epsMax?: number;
+    bookValueMin?: number;
+    bookValueMax?: number;
+    psMin?: number;
+    psMax?: number;
 }
 
 export interface ActiveFilter {
@@ -135,6 +154,25 @@ export interface Pagination {
 // ============================================
 // Comparison Types
 // ============================================
+
+export interface FinancialMetrics {
+    revenue?: number;
+    profit?: number;
+    grossMargin?: number;
+    netMargin?: number;
+    roe?: number;
+    roa?: number;
+    debtToEquity?: number;
+}
+
+export interface PriceHistory {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
 
 export interface ComparisonStock extends Stock {
     financials?: FinancialMetrics;

@@ -45,6 +45,14 @@ class Cophieu68Collector:
     
     BASE_URL = "https://www.cophieu68.vn"
     
+    # Exchange IDs for fetching all stocks
+    # Each exchange has its own stocks, need to collect from all
+    EXCHANGE_IDS = {
+        '^vnindex': 'HOSE',    # ~370 HOSE stocks
+        '^hastc': 'HNX',       # ~350 HNX stocks  
+        '^upcom': 'UPCOM',     # ~900+ UPCOM stocks
+    }
+    
     # Super polite rate limiting settings
     MIN_REQUEST_DELAY = 3.0  # Minimum 3 seconds between requests
     MAX_JITTER = 2.0         # Random jitter up to 2 seconds
@@ -173,10 +181,17 @@ class Cophieu68Collector:
         # Handle percentage
         if '%' in text:
             text = text.replace('%', '')
+        
+        # Handle 'x' suffix for ratios (e.g., "1.7x" for P/B ratio)
+        if text.endswith('x') or text.endswith('X'):
+            text = text[:-1]
             
-        # Handle billion/million suffixes
+        # Handle multiplier suffixes
         multiplier = 1
-        if text.endswith('B') or text.endswith('tỷ'):
+        if text.endswith('k') or text.endswith('K'):
+            multiplier = 1_000
+            text = text[:-1]
+        elif text.endswith('B') or text.endswith('tỷ'):
             multiplier = 1_000_000_000
             text = text[:-1] if text[-1] == 'B' else text.replace('tỷ', '')
         elif text.endswith('M') or text.endswith('tr'):
@@ -233,22 +248,42 @@ class Cophieu68Collector:
                 continue
             
             symbol = symbol_match.group(1).upper()
-            company_name = symbol_link.get_text(strip=True)
+            raw_text = symbol_link.get_text(strip=True)
+            
+            # Extract company name - remove symbol prefix (lowercase symbol at start)
+            company_name = raw_text
+            if raw_text.lower().startswith(symbol.lower()):
+                company_name = raw_text[len(symbol):].strip()
+            # Also handle newline separation
+            if '\n' in company_name:
+                company_name = company_name.split('\n')[-1].strip()
             
             # Parse based on vt type
             stock_data = {
                 'symbol': symbol,
-                'company_name': company_name.split('\n')[0].strip() if company_name else None,
+                'company_name': company_name if company_name else None,
             }
             
-            # Get all cell values
+            # Get all cell values (skip empty cells)
             cell_values = [c.get_text(strip=True) for c in cells]
             
             try:
                 if vt_type == 1:
-                    # vt=1: Mã, Tên, Giá, KLGD, KL52w, KLNiêmYết, VốnTT, NN%
+                    # vt=1: Col0=Mã, Col1=Giá, Col2=ThayĐổi, Col3=KLGD, Col4=KL52w, Col5=KLNiêmYết, Col6=VốnTT, Col7=NN%
+                    # Price is in 1000 VND units (e.g., 57.50 = 57,500 VND)
                     if len(cell_values) >= 7:
-                        stock_data['current_price'] = self._parse_number(cell_values[2]) if len(cell_values) > 2 else None
+                        price = self._parse_number(cell_values[1])  # Col 1 = Giá (actual price)
+                        stock_data['current_price'] = price * 1000 if price else None  # Convert to VND
+                        stock_data['price_change'] = self._parse_number(cell_values[2])  # Col 2 = Thay đổi
+                        
+                        # Calculate percent change
+                        if stock_data['current_price'] and stock_data['price_change']:
+                            prev_price = (stock_data['current_price'] / 1000) - stock_data['price_change']
+                            if prev_price != 0:
+                                stock_data['percent_change'] = (stock_data['price_change'] / prev_price) * 100
+                            else:
+                                stock_data['percent_change'] = 0
+                        
                         stock_data['volume'] = self._parse_number(cell_values[3]) if len(cell_values) > 3 else None
                         stock_data['avg_volume_52w'] = self._parse_number(cell_values[4]) if len(cell_values) > 4 else None
                         stock_data['listed_shares'] = self._parse_number(cell_values[5]) if len(cell_values) > 5 else None
@@ -256,9 +291,11 @@ class Cophieu68Collector:
                         stock_data['foreign_ownership'] = self._parse_number(cell_values[7]) if len(cell_values) > 7 else None
                         
                 elif vt_type == 2:
-                    # vt=2: Mã, Tên, Giá, GiáSổSách, P/B, EPS, PE, PS, ROA, ROE
+                    # vt=2: Col0=Mã, Col1=Giá, Col2=ThayĐổi, Col3=GiáSổSách, Col4=P/B, Col5=EPS, Col6=PE, Col7=PS, Col8=ROA, Col9=ROE
                     if len(cell_values) >= 8:
-                        stock_data['current_price'] = self._parse_number(cell_values[2]) if len(cell_values) > 2 else None
+                        price = self._parse_number(cell_values[1])  # Col 1 = Giá
+                        stock_data['current_price'] = price * 1000 if price else None
+                        stock_data['price_change'] = self._parse_number(cell_values[2])  # Col 2 = Thay đổi
                         stock_data['book_value'] = self._parse_number(cell_values[3]) if len(cell_values) > 3 else None
                         stock_data['pb_ratio'] = self._parse_number(cell_values[4]) if len(cell_values) > 4 else None
                         stock_data['eps'] = self._parse_number(cell_values[5]) if len(cell_values) > 5 else None
@@ -268,9 +305,11 @@ class Cophieu68Collector:
                         stock_data['roe'] = self._parse_number(cell_values[9]) if len(cell_values) > 9 else None
                         
                 elif vt_type == 3:
-                    # vt=3: Mã, Tên, Giá, Nợ, VốnCSH, TổngTS, %Nợ/CSH, %CSH/TS, TiềnMặt
+                    # vt=3: Col0=Mã, Col1=Giá, Col2=ThayĐổi, Col3=Nợ, Col4=VốnCSH, Col5=TổngTS, Col6=%Nợ/CSH, Col7=%CSH/TS, Col8=TiềnMặt
                     if len(cell_values) >= 7:
-                        stock_data['current_price'] = self._parse_number(cell_values[2]) if len(cell_values) > 2 else None
+                        price = self._parse_number(cell_values[1])  # Col 1 = Giá
+                        stock_data['current_price'] = price * 1000 if price else None
+                        stock_data['price_change'] = self._parse_number(cell_values[2])  # Col 2 = Thay đổi
                         stock_data['total_debt'] = self._parse_number(cell_values[3]) if len(cell_values) > 3 else None
                         stock_data['owner_equity'] = self._parse_number(cell_values[4]) if len(cell_values) > 4 else None
                         stock_data['total_assets'] = self._parse_number(cell_values[5]) if len(cell_values) > 5 else None
@@ -287,89 +326,105 @@ class Cophieu68Collector:
         logger.info(f"📊 Parsed {len(results)} stocks from vt={vt_type}")
         return results
     
-    async def collect_market_data(self, vt_type: int = 1, max_pages: int = 20) -> List[Dict[str, Any]]:
+    async def collect_market_data(
+        self, 
+        vt_type: int = 1, 
+        exchange_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Collect all stocks from a specific market view with pagination.
+        Collect stocks from a specific market view for a specific exchange.
         
         Args:
             vt_type: 1=listings, 2=financials, 3=balance sheet
-            max_pages: Maximum pages to scrape (safety limit)
+            exchange_id: Exchange identifier (^vnindex, ^hastc, ^upcom) or None for default
         """
-        all_stocks = []
-        page = 1
+        # Build URL with exchange ID if provided
+        if exchange_id:
+            url = f"{self.BASE_URL}/market/markets.php?id={exchange_id}&vt={vt_type}"
+        else:
+            url = f"{self.BASE_URL}/market/markets.php?vt={vt_type}"
         
-        while page <= max_pages:
-            url = f"{self.BASE_URL}/market/markets.php?vt={vt_type}&cP={page}"
-            
-            html = await self._fetch_page(url)
-            if not html:
-                break
-            
-            stocks = self._parse_market_table(html, vt_type)
-            
-            if not stocks:
-                logger.info(f"📄 No more data on page {page}")
-                break
-            
-            all_stocks.extend(stocks)
-            logger.info(f"📄 Page {page}: {len(stocks)} stocks (total: {len(all_stocks)})")
-            
-            # Check for next page link
-            soup = BeautifulSoup(html, 'html.parser')
-            next_link = soup.find('a', text=re.compile(r'>>|Next|Tiếp'))
-            if not next_link:
-                break
-            
-            page += 1
+        html = await self._fetch_page(url)
+        if not html:
+            return []
         
-        return all_stocks
+        stocks = self._parse_market_table(html, vt_type)
+        
+        # Tag with exchange if we know it
+        if exchange_id and exchange_id in self.EXCHANGE_IDS:
+            exchange_name = self.EXCHANGE_IDS[exchange_id]
+            for stock in stocks:
+                stock['exchange'] = exchange_name
+        
+        return stocks
     
     async def collect_all_stocks_data(self) -> Dict[str, Dict[str, Any]]:
         """
-        Collect and merge data from all vt views into a single dict by symbol.
-        This is the main method to get complete stock data.
+        Collect and merge data from all exchanges and all vt views.
+        
+        Iterates through:
+        - All exchanges (HOSE, HNX, UPCOM)
+        - All data types (vt=1,2,3)
+        
+        This is the main method to get complete stock data for ~1700 stocks.
         """
-        logger.info("🚀 Starting full data collection (this will take several minutes)...")
+        logger.info("🚀 Starting full multi-exchange data collection...")
+        logger.info(f"   Exchanges: {list(self.EXCHANGE_IDS.values())}")
         
         merged_data: Dict[str, Dict[str, Any]] = {}
         
-        # Collect vt=1 (listings, market cap)
-        logger.info("📊 Collecting vt=1 (listings, market cap)...")
-        vt1_data = await self.collect_market_data(vt_type=1)
-        for stock in vt1_data:
-            symbol = stock.get('symbol')
-            if symbol:
-                merged_data[symbol] = stock
-        
-        # Collect vt=2 (financial ratios) - very politely
-        logger.info("📊 Collecting vt=2 (financial ratios)...")
-        await asyncio.sleep(5)  # Extra pause between different data types
-        vt2_data = await self.collect_market_data(vt_type=2)
-        for stock in vt2_data:
-            symbol = stock.get('symbol')
-            if symbol:
-                if symbol in merged_data:
-                    merged_data[symbol].update(stock)
-                else:
+        # Iterate through each exchange
+        for exchange_id, exchange_name in self.EXCHANGE_IDS.items():
+            logger.info(f"\n📈 Collecting from {exchange_name} ({exchange_id})...")
+            
+            # Collect vt=1 (listings, market cap)
+            logger.info(f"   📊 vt=1 (listings, market cap)...")
+            vt1_data = await self.collect_market_data(vt_type=1, exchange_id=exchange_id)
+            for stock in vt1_data:
+                symbol = stock.get('symbol')
+                if symbol:
                     merged_data[symbol] = stock
-        
-        # Collect vt=3 (balance sheet) - very politely
-        logger.info("📊 Collecting vt=3 (balance sheet)...")
-        await asyncio.sleep(5)  # Extra pause
-        vt3_data = await self.collect_market_data(vt_type=3)
-        for stock in vt3_data:
-            symbol = stock.get('symbol')
-            if symbol:
-                if symbol in merged_data:
-                    merged_data[symbol].update(stock)
-                else:
-                    merged_data[symbol] = stock
+            logger.info(f"      Got {len(vt1_data)} stocks")
+            
+            # Polite pause
+            await asyncio.sleep(3)
+            
+            # Collect vt=2 (financial ratios)
+            logger.info(f"   📊 vt=2 (financial ratios)...")
+            vt2_data = await self.collect_market_data(vt_type=2, exchange_id=exchange_id)
+            for stock in vt2_data:
+                symbol = stock.get('symbol')
+                if symbol:
+                    if symbol in merged_data:
+                        merged_data[symbol].update(stock)
+                    else:
+                        merged_data[symbol] = stock
+            logger.info(f"      Got {len(vt2_data)} stocks")
+            
+            await asyncio.sleep(3)
+            
+            # Collect vt=3 (balance sheet)
+            logger.info(f"   📊 vt=3 (balance sheet)...")
+            vt3_data = await self.collect_market_data(vt_type=3, exchange_id=exchange_id)
+            for stock in vt3_data:
+                symbol = stock.get('symbol')
+                if symbol:
+                    if symbol in merged_data:
+                        merged_data[symbol].update(stock)
+                    else:
+                        merged_data[symbol] = stock
+            logger.info(f"      Got {len(vt3_data)} stocks")
+            
+            logger.info(f"   ✅ {exchange_name} complete: {sum(1 for s in merged_data.values() if s.get('exchange') == exchange_name)} stocks")
+            
+            # Pause between exchanges
+            await asyncio.sleep(5)
         
         # Add timestamp
         for symbol in merged_data:
             merged_data[symbol]['updated_at'] = datetime.now().isoformat()
         
-        logger.info(f"🎉 Collection complete: {len(merged_data)} stocks with merged data")
+        logger.info(f"\n🎉 Collection complete: {len(merged_data)} total stocks across all exchanges")
         return merged_data
     
     async def collect_daily_prices(self, date: Optional[str] = None) -> List[Dict[str, Any]]:

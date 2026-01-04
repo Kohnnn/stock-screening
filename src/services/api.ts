@@ -178,6 +178,145 @@ class ApiService {
             return false;
         }
     }
+
+    // =========================================
+    // New Company Data Endpoints
+    // =========================================
+
+    /**
+     * Get shareholders for a stock (Ban lãnh đạo, Tổ chức, Nước ngoài, etc.)
+     */
+    async getShareholders(symbol: string, refresh = false): Promise<{
+        symbol: string;
+        shareholders: Array<{
+            shareholder_name: string;
+            ownership_percent: number;
+            quantity: number;
+        }>;
+        count: number;
+    }> {
+        const params = refresh ? '?refresh=true' : '';
+        return this.fetchJson(`/api/data/shareholders/${symbol}${params}`);
+    }
+
+    /**
+     * Get company officers/management
+     */
+    async getOfficers(symbol: string, status = 'working'): Promise<{
+        symbol: string;
+        officers: Array<{
+            officer_name: string;
+            position: string;
+            ownership_percent: number;
+        }>;
+        count: number;
+    }> {
+        return this.fetchJson(`/api/data/officers/${symbol}?status=${status}`);
+    }
+
+    /**
+     * Get company profile with sector and industry
+     */
+    async getProfile(symbol: string): Promise<{
+        symbol: string;
+        profile: Stock | null;
+        shareholders_count: number;
+        recent_dividends: number;
+        top_shareholders: Array<{ shareholder_name: string; ownership_percent: number }>;
+    }> {
+        return this.fetchJson(`/api/data/profile/${symbol}`);
+    }
+
+    /**
+     * Get dividend history
+     */
+    async getDividends(symbol: string, limit = 10): Promise<{
+        symbol: string;
+        dividends: Array<{
+            ex_date: string;
+            cash_dividend: number;
+            stock_dividend: number;
+        }>;
+        count: number;
+    }> {
+        return this.fetchJson(`/api/data/dividends/${symbol}?limit=${limit}`);
+    }
+
+    // =========================================
+    // Real-time Market Data (SSI iBoard)
+    // =========================================
+
+    /**
+     * Get real-time price snapshot for a market group
+     */
+    async getRealtimeSnapshot(group: 'VN30' | 'HOSE' | 'HNX' | 'UPCOM' = 'VN30'): Promise<{
+        group: string;
+        stocks: Array<{
+            symbol: string;
+            current_price: number;
+            price_change: number;
+            percent_change: number;
+            volume: number;
+            bid_1_price: number;
+            bid_1_volume: number;
+            ask_1_price: number;
+            ask_1_volume: number;
+            foreign_buy_volume: number;
+            foreign_sell_volume: number;
+        }>;
+        count: number;
+        timestamp: string;
+    }> {
+        return this.fetchJson(`/api/realtime/snapshot/${group}`);
+    }
+
+    /**
+     * Get all markets real-time data
+     */
+    async getAllRealtimeMarkets(): Promise<{
+        markets: Record<string, Array<{ symbol: string; current_price: number }>>;
+        total_stocks: number;
+        timestamp: string;
+    }> {
+        return this.fetchJson('/api/realtime/all');
+    }
+
+    // =========================================
+    // Financial Reports & Orderflow
+    // =========================================
+
+    /**
+     * Get financial statement from CafeF (BCTC)
+     */
+    async getBCTC(symbol: string, reportType: 'income' | 'balance' | 'cashflow' = 'income', quarterly = true): Promise<{
+        symbol: string;
+        report_type: string;
+        quarterly: boolean;
+        rows: number;
+        columns: string[];
+        data: Array<Record<string, unknown>>;
+    }> {
+        return this.fetchJson(`/api/data/bctc/${symbol}?report_type=${reportType}&quarterly=${quarterly}`);
+    }
+
+    /**
+     * Get daily orderflow history (foreign buy/sell, dư mua/dư bán)
+     */
+    async getOrderflow(symbol: string, days = 30): Promise<{
+        symbol: string;
+        history: Array<{
+            trade_date: string;
+            foreign_buy_volume: number;
+            foreign_sell_volume: number;
+            foreign_net_volume: number;
+            bid_surplus: number;
+            ask_surplus: number;
+            net_bid_ask: number;
+        }>;
+        count: number;
+    }> {
+        return this.fetchJson(`/api/data/orderflow/${symbol}?days=${days}`);
+    }
 }
 
 // Export singleton instance

@@ -2,7 +2,7 @@
 Initial Database Builder for VnStock Screener
 
 This script builds the initial persistent database from cophieu68.vn data.
-The database is meant to be committed and used as a baseline.
+The database is meant to be committed to git as a baseline.
 
 Usage:
     python build_initial_database.py
@@ -10,12 +10,18 @@ Usage:
 Features:
 - Collects all stock data from cophieu68.vn (super politely)
 - Stores in persistent SQLite database
-- Tracks data freshness per stock
+- Tracks data freshness per stock using data_versions table
+- Creates a manifest file for version tracking
 - Skips already up-to-date data
+
+Output:
+- backend/data/initial_database.db  (git-committed baseline)
+- backend/data/data_manifest.json   (metadata about what's included)
 """
 
 import asyncio
 import json
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -23,6 +29,7 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 from cophieu68_collector import Cophieu68Collector
 from database import Database
+from data_freshness import DataFreshnessChecker
 
 # Configure logging
 LOG_PATH = Path(__file__).parent / "logs"
@@ -237,7 +244,15 @@ async def main():
     logger.info("VnStock Screener - Initial Database Builder")
     logger.info("=" * 60)
     
-    builder = DatabaseBuilder()
+    # Paths
+    data_dir = Path(__file__).parent / "data"
+    data_dir.mkdir(exist_ok=True)
+    
+    runtime_db_path = data_dir / "vnstock_data.db"
+    initial_db_path = data_dir / "initial_database.db"
+    manifest_path = data_dir / "data_manifest.json"
+    
+    builder = DatabaseBuilder(str(runtime_db_path))
     
     try:
         await builder.initialize()
@@ -254,6 +269,53 @@ async def main():
         
         logger.info(f"\n🎉 Database build complete!")
         logger.info(f"   Updated {count} stocks")
+        
+        # Record freshness for all collected stocks
+        if count > 0:
+            freshness_checker = DataFreshnessChecker(str(runtime_db_path))
+            
+            # Get all symbols
+            async with builder.db.connection() as db:
+                cursor = await db.execute("SELECT symbol FROM stocks")
+                rows = await cursor.fetchall()
+                symbols = [row['symbol'] for row in rows]
+            
+            # Record updates
+            freshness_checker.record_bulk_update(symbols, 'price', 'cophieu68')
+            freshness_checker.record_bulk_update(symbols, 'financials', 'cophieu68')
+            freshness_checker.record_bulk_update(symbols, 'balance_sheet', 'cophieu68')
+            
+            logger.info(f"📝 Recorded freshness for {len(symbols)} symbols")
+            
+            # Create manifest
+            manifest = {
+                'created_at': datetime.now().isoformat(),
+                'version': '1.0',
+                'source': 'cophieu68.vn',
+                'stocks_count': count,
+                'data_types': ['price', 'financials', 'balance_sheet'],
+                'freshness_summary': freshness_checker.get_update_summary(),
+                'description': 'Initial database baseline for VnStock Screener'
+            }
+            
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"📄 Manifest saved to {manifest_path}")
+            
+            # Copy to initial_database.db for git commit
+            shutil.copy2(runtime_db_path, initial_db_path)
+            logger.info(f"💾 Initial database saved to {initial_db_path}")
+            
+            # Print final summary
+            print("\n" + "="*60)
+            print("✅ INITIAL DATABASE BUILD COMPLETE")
+            print("="*60)
+            print(f"\nFiles created:")
+            print(f"  - {initial_db_path} (commit this to git)")
+            print(f"  - {manifest_path}")
+            print(f"\nTo use with Docker, copy initial_database.db to runtime location.")
+            print("="*60 + "\n")
         
     finally:
         await builder.close()

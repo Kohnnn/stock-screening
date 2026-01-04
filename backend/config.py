@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # ===========================================
     # Data Collection Settings
     # ===========================================
-    DEFAULT_VNSTOCK_SOURCE: str = os.getenv("DEFAULT_VNSTOCK_SOURCE", "TCBS")
+    DEFAULT_VNSTOCK_SOURCE: str = os.getenv("DEFAULT_VNSTOCK_SOURCE", "DNSE")
     BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "10"))
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
     

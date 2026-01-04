@@ -20,7 +20,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # vnstock imports
-from vnstock import Vnstock, Listing
+from vnstock import VnStock, Listing
 
 # Local imports
 from config import settings
@@ -245,6 +245,24 @@ class DataCollector:
         # Step 3: Collect company details for subset
         detail_symbols = symbols[:detail_limit]
         await self.collect_company_details(detail_symbols)
+        
+        # Step 4: Calculate & Backfill Margins/Growth (FireAnt Replacement)
+        # We run this for all stocks that we have data for
+        try:
+            from fireant_collector import FireAntCollector
+            print("\n[4/4] Calculating margins & growth metrics...")
+            fireant = FireAntCollector(self.db)
+            # Override source to VCI specifically for this if needed, 
+            # but rely on VnStockCollector default for now (usually DNSE/TCBS, but we know VCI works for statements)
+            # Actually, to be safe, let's force the collector inside fireant to use VCI if possible, 
+            # or ensure config is correct. 
+            # Since FireAntCollector instantiates its own VnStockCollector, 
+            # we should update config.py to prefer VCI or set it here.
+            # But changing global config might affect others. 
+            # Let's just run it. The FireAntCollector uses the standard collector.
+            await fireant.update_margins_and_growth()
+        except Exception as e:
+            print(f"[ERROR] FireAnt backfill failed: {e}")
         
         # Final stats
         self.stats['end_time'] = datetime.now()

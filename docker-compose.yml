@@ -9,7 +9,7 @@ services:
       - "80:80"
     volumes:
       # This needs to be indented so it belongs to 'frontend'
-      - C:/Dockerstorage:/app/shared_data
+      - ./frontend/shared_data:/app/shared_data
     depends_on:
       - backend
     restart: unless-stopped
@@ -22,8 +22,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Host Path (Your PC)       : Container Path (Internal)
-      - C:/Dockerstorage:/app/data
+      # Database persistence - uses local backend/data directory
+      # This allows database to be committed to Git for default dataset
+      - ./backend/data:/app/data
       # Keep logs relative
       - ./backend/logs:/app/logs
     env_file:

@@ -1,0 +1,159 @@
+{
+    "Ngân hàng": [
+        "VCB",
+        "BID",
+        "CTG",
+        "TCB",
+        "VPB",
+        "MBB",
+        "ACB",
+        "STB",
+        "HDB",
+        "VIB",
+        "SHB",
+        "LPB",
+        "EIB",
+        "OCB",
+        "MSB",
+        "SSB",
+        "TPB"
+    ],
+    "Bất động sản": [
+        "VHM",
+        "VIC",
+        "VRE",
+        "NVL",
+        "PDR",
+        "DIG",
+        "KBC",
+        "DXG",
+        "NLG",
+        "KDH",
+        "CEO",
+        "HQC",
+        "ITA",
+        "TCH",
+        "SCR",
+        "KHG"
+    ],
+    "Chứng khoán": [
+        "SSI",
+        "VND",
+        "VCI",
+        "HCM",
+        "SHS",
+        "MBS",
+        "FTS",
+        "BSI",
+        "CTS",
+        "AGR",
+        "VIX",
+        "ORS",
+        "VDS"
+    ],
+    "Thép": [
+        "HPG",
+        "HSG",
+        "NKG",
+        "POM",
+        "TLH",
+        "SMC",
+        "TVN"
+    ],
+    "Dầu khí": [
+        "GAS",
+        "PLX",
+        "PVD",
+        "PVS",
+        "BSR",
+        "OIL",
+        "PVT",
+        "PVC",
+        "PVB"
+    ],
+    "Bán lẻ": [
+        "MWG",
+        "PNJ",
+        "FRT",
+        "PET",
+        "DGW"
+    ],
+    "Thực phẩm": [
+        "VNM",
+        "MSN",
+        "SAB",
+        "KDC",
+        "MCH",
+        "QNS",
+        "SBT",
+        "DBC",
+        "HAG",
+        "BAF",
+        "PAN"
+    ],
+    "Hóa chất-Phân bón": [
+        "DGC",
+        "DPM",
+        "DCM",
+        "CSV",
+        "LAS",
+        "DDV"
+    ],
+    "Công nghệ": [
+        "FPT",
+        "CMG",
+        "ELC",
+        "ITD"
+    ],
+    "Điện - Năng lượng": [
+        "POW",
+        "REE",
+        "PC1",
+        "GEG",
+        "NT2",
+        "QTP",
+        "HND",
+        "GEX"
+    ],
+    "Khu công nghiệp": [
+        "BCM",
+        "IDC",
+        "VGC",
+        "KBC",
+        "SZC",
+        "ITA",
+        "LHG"
+    ],
+    "Cảng biển-Vận tải": [
+        "GMD",
+        "HAH",
+        "VOS",
+        "PVT",
+        "VSC",
+        "PHP"
+    ],
+    "Xây dựng - Đầu tư công": [
+        "VCG",
+        "HHV",
+        "LCG",
+        "FCN",
+        "C4G",
+        "KSB",
+        "PLC",
+        "CTD",
+        "HBC"
+    ],
+    "Thủy sản": [
+        "VHC",
+        "ANV",
+        "IDI",
+        "CMX",
+        "FMC"
+    ],
+    "Dệt may": [
+        "TNG",
+        "VGT",
+        "GIL",
+        "MSH"
+    ]
+}

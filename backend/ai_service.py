@@ -39,91 +39,55 @@ DEFAULT_MODEL = "gemini-2.0-flash-exp"
 # ============================================
 
 ANALYSIS_PROMPT_TEMPLATE = """
-Bạn là một nhà phân tích đầu tư chứng khoán chuyên nghiệp. 
-Hãy phân tích cổ phiếu {symbol} ({company_name}) dựa trên dữ liệu được cung cấp và thông tin cập nhật từ Google Search.
+Hãy đóng vai một chuyên gia phân tích tài chính hàng đầu tại Việt Nam (như SSI, VCSC, HSC).
+Nhiệm vụ của bạn là phân tích chi tiết mã cổ phiếu {symbol} ({company_name}) để hỗ trợ nhà đầu tư ra quyết định.
 
-**DỮ LIỆU CỔ PHIẾU:**
+**DỮ LIỆU ĐẦU VÀO:**
 {stock_data}
 
-**YÊU CẦU:**
-Hãy viết một bài phân tích đầu tư đầy đủ bằng tiếng Việt với cấu trúc 9 phần như sau:
+**YÊU CẦU PHÂN TÍCH:**
+Hãy viết báo cáo phân tích BẰNG TIẾNG VIỆT, sử dụng ngôn ngữ chuyên ngành tài chính nhưng dễ hiểu, với cấu trúc Markdown chuẩn như sau:
 
-## 1. Khuyến nghị đầu tư
-- Giá hiện tại và ngày cập nhật
-- Đánh giá: Buy/Hold/Sell
-- Phân loại giai đoạn công ty (Tăng trưởng cao, Ổn định, Value, v.v.)
-- Mục tiêu giá 12 tháng
-- Mức độ tin cậy: High/Medium/Low
-- Phân bổ danh mục khuyến nghị
-- Mức vào khuyến nghị (giá hợp lý để mua)
+# 📊 Báo cáo Phân tích {symbol} - {company_name}
 
-## 2. Tổng quan công ty
-- Mô tả ngắn gọn về công ty và lĩnh vực hoạt động
-- Đánh giá định giá (P/E, P/B, so với ngành)
-- Điểm nổi bật chính (doanh thu, lợi nhuận, EPS, vốn hóa)
-- Nguồn doanh thu và phân khúc kinh doanh
-- Mô hình kinh doanh và lợi thế cạnh tranh (moat)
-- Tin tức và sự kiện gần đây (30-60 ngày)
-- Đồng thuận phân tích từ các CTCK
+## 1. 🚦 Khuyến nghị Đầu tư (Quan trọng nhất)
+*   **Đánh giá:** Mua / Nắm giữ / Bán
+*   **Vùng giá mua khuyến nghị:** ...
+*   **Giá mục tiêu (Target Price):** ...
+*   **Thời gian nắm giữ:** Ngắn hạn / Trung hạn / Dài hạn
+*   **Tóm tắt luận điểm chính:** (3 gạch đầu dòng quan trọng nhất)
 
-## 3. Luận điểm đầu tư
-- Tóm tắt luận điểm đầu tư chính (2-3 câu)
-- Bull Case: 3 kịch bản tích cực
-- Bear Case: 3 kịch bản tiêu cực
-- Kịch bản cơ bản và dự báo tăng trưởng
+## 2. 🏢 Tổng quan Doanh nghiệp & Vị thế
+*   Mô tả ngắn gọn mô hình kinh doanh.
+*   Vị thế trong ngành (Top mấy, thị phần).
+*   Lợi thế cạnh tranh bền vững (Moat) là gì?
 
-## 4. Cạnh tranh & Rủi ro
-- Vị thế cạnh tranh trong ngành
-- Phân tích 3 rủi ro chính với:
-  - Mô tả rủi ro
-  - Xác suất xảy ra (%)
-  - Tác động (Cao/Trung bình/Thấp)
-  - Thời gian (Ngắn/Trung/Dài hạn)
-- Hồ sơ rủi ro tổng thể
+## 3. 💰 Sức khỏe Tài chính (Dựa trên dữ liệu)
+*   **Định giá (P/E, P/B):** So sánh với trung bình ngành/lịch sử. Đắt hay rẻ?
+*   **Hiệu quả (ROE, ROA):** Công ty sử dụng vốn có hiệu quả không?
+*   **Rủi ro tài chính:** Nợ vay, dòng tiền như thế nào?
 
-## 5. Phân tích kỹ thuật
-- Xu hướng hiện tại (tăng/giảm/sideway)
-- So sánh với các đường MA (20, 50, 200 ngày)
-- Mức hỗ trợ và kháng cự quan trọng
-- RSI và các chỉ báo momentum
-- Khối lượng giao dịch và tín hiệu
-- Khuyến nghị điểm vào từ góc nhìn kỹ thuật
+## 4. 📈 Phân tích Kỹ thuật (Technical Analysis)
+*   Xu hướng hiện tại (Trend).
+*   Các vùng hỗ trợ/kháng cự cứng.
+*   Tín hiệu từ các chỉ báo (RSI, Volume,...).
 
-## 6. Phân tích cơ bản
-- Phương pháp định giá sử dụng (DCF, P/E, P/B, v.v.)
-- Các giả định chính cho định giá
-- Kịch bản Bear case với Monte Carlo
-- Biên an toàn (margin of safety)
-- So sánh với định giá của các CTCK
+## 5. ⚠️ Rủi ro & Thách thức
+*   Nêu 3 rủi ro lớn nhất (Vĩ mô, Ngành, Nội tại).
 
-## 7. Bối cảnh kinh tế vĩ mô
-- Môi trường lãi suất hiện tại (Fed, SBV)
-- Lạm phát và GDP
-- Xu hướng tỷ giá USD/VND
-- Đầu gió và đuôi gió kinh tế
-- Phân tích kịch bản macro với xác suất
-- Tác động của macro lên cổ phiếu
+## 6. 🔮 Triển vọng Tương lai
+*   Động lực tăng trưởng (Catalyst) sắp tới là gì?
 
-## 8. Cơ hội
-- 3 cơ hội tăng trưởng chưa được định giá đầy đủ
-- Mỗi cơ hội cần có: mô tả, xác suất, thời gian, tác động dự kiến
-
-## 9. Triển vọng & Xúc tác
-- Tóm tắt khuyến nghị cuối cùng
-- Xúc tác ngắn hạn (0-3 tháng)
-- Xúc tác trung hạn (3-12 tháng)
-- Mục tiêu giá 12 tháng với kịch bản Bull/Bear
-
+---
 {custom_prompt}
 
-**LƯU Ý QUAN TRỌNG:**
-- Sử dụng Google Search để cập nhật thông tin mới nhất về công ty, tin tức thị trường, và bối cảnh kinh tế
-- Trích dẫn nguồn khi sử dụng thông tin từ Google Search
-- Tất cả số liệu và phân tích phải nhất quán với dữ liệu được cung cấp
-- Sử dụng format markdown với headers, bullets, và bảng khi phù hợp
-- Viết hoàn toàn bằng tiếng Việt
+**LƯU Ý KHI VIẾT:**
+1.  **Tuyệt đối sử dụng Tiếng Việt** 100%.
+2.  **Số liệu minh chứng:** Mọi nhận định phải đi kèm số liệu từ DỮ LIỆU ĐẦU VÀO hoặc Google Search.
+3.  **Trình bày đẹp:** Sử dụng bold, bullet points, table để dễ đọc.
+4.  **Google Grounding:** Tự động tìm kiếm tin tức mới nhất để bổ sung vào bài viết (ví dụ: kết quả kinh doanh quý gần nhất, tin đồn, v.v.).
 
-Hãy bắt đầu phân tích:
+Bắt đầu phân tích ngay:
 """
 
 
@@ -138,6 +102,7 @@ class AIAnalysisRequest:
     api_key: str
     model: str = DEFAULT_MODEL
     custom_prompt: Optional[str] = None
+    prompt_template: Optional[str] = None
     enable_grounding: bool = True
 
 
@@ -509,7 +474,9 @@ class AIAnalysisService:
             custom_section = f"\n\n**YÊU CẦU BỔ SUNG TỪ NGƯỜI DÙNG:**\n{request.custom_prompt}\n"
         
         # Build full prompt
-        prompt = ANALYSIS_PROMPT_TEMPLATE.format(
+        template = request.prompt_template if request.prompt_template else ANALYSIS_PROMPT_TEMPLATE
+        
+        prompt = template.format(
             symbol=request.symbol,
             company_name=company_name,
             stock_data=formatted_data,

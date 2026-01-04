@@ -31,6 +31,7 @@ except ImportError:
 from config import settings
 from rate_limiter import RateLimiter, get_rate_limiter
 from circuit_breaker import CircuitBreaker, CircuitOpenError, get_circuit_breaker
+from cafef_scraper import get_cafef_scraper
 
 
 class VnStockCollector:
@@ -255,7 +256,7 @@ class VnStockCollector:
                 ratios_df = await self._protected_api_call(
                     stock.finance.ratio,
                     period='year',
-                    lang='en'
+                    lang='vi'
                 )
                 
                 if ratios_df is not None and not ratios_df.empty:
@@ -286,6 +287,59 @@ class VnStockCollector:
             pass
         return None
     
+    # =========================================
+    # Screener Data (Full Metrics)
+    # =========================================
+
+    async def collect_screener_full(self) -> List[Dict[str, Any]]:
+        """Collect comprehensive screener data (84 metrics) for all stocks."""
+        logger.info("🔍 Collecting FULL screener metrics (TCBS)...")
+        
+        try:
+            # TCBS Screener source
+            stock = self.vnstock.stock(source='TCBS')
+            
+            # Construct params to get ALL stocks
+            # Filter: Market Cap > 0
+            params = {
+                "filter": [
+                    {"key": "marketCap", "operator": ">", "value": 0}
+                ],
+                "sort": [{"key": "marketCap", "value": "desc"}],
+                "limit": 2000,
+                "page": 0
+            }
+            
+            df = await self._protected_api_call(
+                stock.screener.screener_data,
+                params=params
+            )
+            
+            if df is None or df.empty:
+                logger.warning("⚠️ Full screener data returned empty")
+                return []
+            
+            # Process DataFrame to list of dicts
+            results = []
+            
+            for _, row in df.iterrows():
+                # Convert row to dict
+                r = row.to_dict()
+                
+                # Normalize keys
+                r['symbol'] = r.get('ticker', r.get('symbol'))
+                
+                results.append(r)
+                
+            logger.info(f"✅ Collected full screener data: {len(results)} records")
+            return results
+            
+        except CircuitOpenError:
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error collecting full screener: {e}")
+            return []
+
     # =========================================
     # Price History
     # =========================================
@@ -509,7 +563,7 @@ class VnStockCollector:
             df = await self._protected_api_call(
                 stock.finance.income_statement,
                 period=period,
-                lang='en'
+                lang='vi'
             )
             
             if df is None or df.empty:
@@ -553,7 +607,7 @@ class VnStockCollector:
             df = await self._protected_api_call(
                 stock.finance.balance_sheet,
                 period=period,
-                lang='en'
+                lang='vi'
             )
             
             if df is None or df.empty:
@@ -598,7 +652,7 @@ class VnStockCollector:
             df = await self._protected_api_call(
                 stock.finance.cash_flow,
                 period=period,
-                lang='en'
+                lang='vi'
             )
             
             if df is None or df.empty:
@@ -647,7 +701,7 @@ class VnStockCollector:
             df = await self._protected_api_call(
                 stock.finance.ratio,
                 period=period,
-                lang='en'
+                lang='vi'
             )
             if df is not None and not df.empty:
                 # Flatten multi-level columns if needed
@@ -794,6 +848,69 @@ class VnStockCollector:
         except CircuitOpenError:
             return ratings
         except Exception as e:
+            logger.warning(f"⚠️ Error collecting ratings for {symbol}: {e}")
+            return ratings
+
+    # =========================================
+    # CafeF Integration (Repair/Alternative)
+    # =========================================
+
+    async def collect_financials_from_cafef(self, symbol: str) -> Dict[str, Any]:
+        """
+        Collect raw financial data from CafeF (Alternative to TCBS).
+        Returns dict with keys matching stock_prices table columns.
+        """
+        scraper = await get_cafef_scraper()
+        result = {}
+
+        try:
+            # 1. Income Statement (Doanh thu, Lợi nhuận)
+            inc_df = await scraper.get_financial_statement(symbol, 'income', quarterly=True)
+            if inc_df is not None and not inc_df.empty:
+                # Need to find value by loosely matching row name
+                def get_value(df, keywords):
+                    for idx, row in df.iterrows():
+                        metric = str(row.iloc[0]).lower()
+                        if any(k in metric for k in keywords):
+                            # Take the most recent period (column 1)
+                            # Column 0 is metric name, Column 1 is latest quarter
+                            if len(row) > 1:
+                                val = row.iloc[1]
+                                return self._safe_float(val)
+                    return None
+
+                result['revenue'] = get_value(inc_df, ['doanh thu thuần', 'doanh thu bán hàng'])
+                result['profit'] = get_value(inc_df, ['lợi nhuận sau thuế thu nhập doanh nghiệp', 'lợi nhuận sau thuế'])
+            
+            # 2. Balance Sheet (Tai san, No, Von)
+            bal_df = await scraper.get_financial_statement(symbol, 'balance', quarterly=True)
+            if bal_df is not None and not bal_df.empty:
+                def get_value(df, keywords):
+                    for idx, row in df.iterrows():
+                        metric = str(row.iloc[0]).lower()
+                        if any(k in metric for k in keywords):
+                            if len(row) > 1:
+                                val = row.iloc[1]
+                                return self._safe_float(val)
+                    return None
+
+                result['total_assets'] = get_value(bal_df, ['tổng cộng tài sản'])
+                result['total_debt'] = get_value(bal_df, ['nợ phải trả'])
+                result['owner_equity'] = get_value(bal_df, ['vốn chủ sở hữu'])
+                # Cash includes "Tiền và các khoản tương đương tiền"
+                result['cash'] = get_value(bal_df, ['tiền và các khoản tương đương tiền'])
+
+            # Add timestamp
+            if result:
+                result['symbol'] = symbol
+                result['updated_at'] = datetime.now().isoformat()
+                logger.info(f"✅ Collected CafeF financials for {symbol}: {list(result.keys())}")
+            
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ CafeF collection failed for {symbol}: {e}")
+            return {}    
             logger.debug(f"Ratings error for {symbol}: {e}")
             return ratings
     
@@ -887,167 +1004,7 @@ class VnStockCollector:
             logger.error(f"❌ Error collecting indices: {e}")
             return []
     
-    # =========================================
-    # TCBS Screener (84 Metrics - MOST EFFICIENT)
-    # =========================================
-    
-    async def collect_screener_full(
-        self,
-        exchanges: str = "HOSE,HNX,UPCOM",
-        limit: int = 1700
-    ) -> List[Dict[str, Any]]:
-        """
-        Collect FULL screener data using TCBS Screener API.
-        
-        This is the MOST EFFICIENT method: ONE API call returns
-        84 metrics for ALL ~1,600 stocks.
-        
-        Metrics include:
-        - Fundamentals: market_cap, pe, pb, roe, eps, dividend_yield
-        - Growth: revenue_growth, eps_growth (1y, 5y)
-        - Technical: rsi14, macd_histogram, price_vs_sma (5-100 day)
-        - Volume: vol_vs_sma, avg_trading_value
-        - Momentum: relative_strength (3d, 1m, 3m, 1y)
-        - TCBS ratings: stock_rating, financial_health, business_model
-        
-        Returns: List of dicts with 84 metrics per stock
-        """
-        logger.info("📊 Collecting FULL screener data (84 metrics)...")
-        
-        try:
-            # Use the Screener API - correct syntax per vnstock docs
-            screener = Screener()
-            
-            # Correct API call: Screener().stock(limit=N)
-            df = await self._protected_api_call(
-                screener.stock,
-                limit=limit
-            )
-            
-            if df is None or df.empty:
-                logger.warning("⚠️ No screener data returned")
-                return []
-            
-            logger.info(f"✅ Screener: {len(df)} stocks with {len(df.columns)} metrics")
-            
-            # Convert to list of dicts, preserving all 84 columns
-            results = []
-            for _, row in df.iterrows():
-                stock_data = {
-                    # Basic Info
-                    'symbol': str(row.get('ticker', '')).upper(),
-                    'exchange': row.get('exchange', ''),
-                    'industry': row.get('industry', ''),
-                    
-                    # Price fields for stock_prices table compatibility
-                    'current_price': self._safe_float(row.get('price_near_realtime')),
-                    'percent_change': self._safe_float(row.get('prev_1d_growth_pct')),
-                    'price_change': None,  # Calculate from percent if needed
-                    
-                    # Fundamental Metrics
-                    'market_cap': self._safe_float(row.get('market_cap')),
-                    'pe_ratio': self._safe_float(row.get('pe')),
-                    'pb_ratio': self._safe_float(row.get('pb')),
-                    'ev_ebitda': self._safe_float(row.get('ev_ebitda')),
-                    'eps': self._safe_float(row.get('eps')),
-                    'roe': self._safe_float(row.get('roe')),
-                    'dividend_yield': self._safe_float(row.get('dividend_yield')),
-                    'gross_margin': self._safe_float(row.get('gross_margin')),
-                    'net_margin': self._safe_float(row.get('net_margin')),
-                    'doe': self._safe_float(row.get('doe')),  # Debt/Equity
-                    
-                    # Growth Metrics
-                    'revenue_growth_1y': self._safe_float(row.get('revenue_growth_1y')),
-                    'revenue_growth_5y': self._safe_float(row.get('revenue_growth_5y')),
-                    'eps_growth_1y': self._safe_float(row.get('eps_growth_1y')),
-                    'eps_growth_5y': self._safe_float(row.get('eps_growth_5y')),
-                    'last_quarter_revenue_growth': self._safe_float(row.get('last_quarter_revenue_growth')),
-                    'last_quarter_profit_growth': self._safe_float(row.get('last_quarter_profit_growth')),
-                    
-                    # Technical Indicators
-                    'rsi14': self._safe_float(row.get('rsi14')),
-                    'macd_histogram': row.get('macd_histogram'),
-                    'price_vs_sma5': row.get('price_vs_sma5'),
-                    'price_vs_sma10': row.get('price_vs_sma10'),
-                    'price_vs_sma20': row.get('price_vs_sma20'),
-                    'price_vs_sma50': row.get('price_vs_sma50'),
-                    'price_vs_sma100': row.get('price_vs_sma100'),
-                    'bolling_band_signal': row.get('bolling_band_signal'),
-                    'dmi_signal': row.get('dmi_signal'),
-                    'rsi14_status': row.get('rsi14_status'),
-                    
-                    # Volume Analysis
-                    'vol_vs_sma5': self._safe_float(row.get('vol_vs_sma5')),
-                    'vol_vs_sma10': self._safe_float(row.get('vol_vs_sma10')),
-                    'vol_vs_sma20': self._safe_float(row.get('vol_vs_sma20')),
-                    'vol_vs_sma50': self._safe_float(row.get('vol_vs_sma50')),
-                    'avg_trading_value_5d': self._safe_float(row.get('avg_trading_value_5d')),
-                    'avg_trading_value_10d': self._safe_float(row.get('avg_trading_value_10d')),
-                    'avg_trading_value_20d': self._safe_float(row.get('avg_trading_value_20d')),
-                    
-                    # Price Performance
-                    'price_near_realtime': self._safe_float(row.get('price_near_realtime')),
-                    'price_growth_1w': self._safe_float(row.get('price_growth_1w')),
-                    'price_growth_1m': self._safe_float(row.get('price_growth_1m')),
-                    'prev_1d_growth_pct': self._safe_float(row.get('prev_1d_growth_pct')),
-                    'prev_1m_growth_pct': self._safe_float(row.get('prev_1m_growth_pct')),
-                    'prev_1y_growth_pct': self._safe_float(row.get('prev_1y_growth_pct')),
-                    'prev_5y_growth_pct': self._safe_float(row.get('prev_5y_growth_pct')),
-                    'pct_away_from_hist_peak': self._safe_float(row.get('pct_away_from_hist_peak')),
-                    'pct_off_hist_bottom': self._safe_float(row.get('pct_off_hist_bottom')),
-                    'pct_1y_from_peak': self._safe_float(row.get('pct_1y_from_peak')),
-                    'pct_1y_from_bottom': self._safe_float(row.get('pct_1y_from_bottom')),
-                    
-                    # Momentum & Relative Strength
-                    'relative_strength_3d': self._safe_float(row.get('relative_strength_3d')),
-                    'rel_strength_1m': self._safe_float(row.get('rel_strength_1m')),
-                    'rel_strength_3m': self._safe_float(row.get('rel_strength_3m')),
-                    'rel_strength_1y': self._safe_float(row.get('rel_strength_1y')),
-                    'tc_rs': self._safe_float(row.get('tc_rs')),
-                    'alpha': self._safe_float(row.get('alpha')),
-                    'beta': self._safe_float(row.get('beta')),
-                    
-                    # TCBS Ratings & Signals
-                    'stock_rating': self._safe_float(row.get('stock_rating')),
-                    'business_operation': self._safe_float(row.get('business_operation')),
-                    'business_model': self._safe_float(row.get('business_model')),
-                    'financial_health': self._safe_float(row.get('financial_health')),
-                    'tcbs_recommend': row.get('tcbs_recommend'),
-                    'tcbs_buy_sell_signal': row.get('tcbs_buy_sell_signal'),
-                    
-                    # Foreign Trading
-                    'foreign_vol_pct': self._safe_float(row.get('foreign_vol_pct')),
-                    'foreign_transaction': row.get('foreign_transaction'),
-                    'foreign_buysell_20s': self._safe_float(row.get('foreign_buysell_20s')),
-                    
-                    # Special Signals
-                    'uptrend': row.get('uptrend'),
-                    'breakout': row.get('breakout'),
-                    'price_break_out52_week': row.get('price_break_out52_week'),
-                    'heating_up': row.get('heating_up'),
-                    
-                    # Continuous Price Movement
-                    'num_increase_continuous_day': self._safe_int(row.get('num_increase_continuous_day')),
-                    'num_decrease_continuous_day': self._safe_int(row.get('num_decrease_continuous_day')),
-                    
-                    # Other
-                    'profit_last_4q': self._safe_float(row.get('profit_last_4q')),
-                    'free_transfer_rate': self._safe_float(row.get('free_transfer_rate')),
-                    'net_cash_per_market_cap': self._safe_float(row.get('net_cash_per_market_cap')),
-                    'net_cash_per_total_assets': self._safe_float(row.get('net_cash_per_total_assets')),
-                    'has_financial_report': row.get('has_financial_report'),
-                }
-                results.append(stock_data)
-            
-            logger.info(f"🎉 Screener collection complete: {len(results)} stocks")
-            return results
-            
-        except CircuitOpenError:
-            logger.warning("⚠️ Circuit open, skipping screener collection")
-            return []
-        except Exception as e:
-            logger.error(f"❌ Error collecting screener data: {e}")
-            return []
+
     
     # =========================================
     # Company Shareholders

@@ -5,9 +5,11 @@ Provides REST API for the React frontend and manages data updates.
 """
 
 import asyncio
+import shutil
 from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +23,7 @@ from vnstock_collector import get_collector
 from update_scheduler import get_scheduler
 from circuit_breaker import get_circuit_breaker
 from rate_limiter import get_rate_limiter
+from ssi_iboard_collector import get_ssi_collector
 
 
 # ============================================
@@ -40,11 +43,34 @@ logger.add(
 # Lifespan Events
 # ============================================
 
+def copy_initial_database_if_missing():
+    """
+    Copy initial_database.db to runtime location if runtime DB doesn't exist.
+    This ensures new deployments have baseline data.
+    """
+    data_dir = Path(__file__).parent / "data"
+    initial_db = data_dir / "initial_database.db"
+    runtime_db = Path(settings.DATABASE_PATH)
+    
+    if initial_db.exists() and not runtime_db.exists():
+        logger.info(f"📦 Copying initial database to {runtime_db}")
+        runtime_db.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(initial_db, runtime_db)
+        logger.info(f"✅ Database initialized from initial_database.db")
+        return True
+    elif not runtime_db.exists() and not initial_db.exists():
+        logger.warning("⚠️ No initial_database.db found - starting with empty database")
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("🚀 VnStock Screener API starting...")
+    
+    # Copy initial database if needed
+    copy_initial_database_if_missing()
     
     # Initialize database
     db = await get_database()
@@ -53,6 +79,17 @@ async def lifespan(app: FastAPI):
     # Check data freshness
     freshness = await db.get_data_freshness()
     logger.info(f"📊 Data freshness: {freshness}")
+    
+    # Run data freshness check with new system
+    try:
+        from data_freshness import DataFreshnessChecker
+        checker = DataFreshnessChecker(settings.DATABASE_PATH)
+        summary = checker.get_update_summary()
+        logger.info(f"📊 Data freshness summary:")
+        for dtype, stats in summary.items():
+            logger.info(f"   {dtype}: {stats['percent_fresh']}% fresh ({stats['fresh']}/{stats['total']})")
+    except Exception as e:
+        logger.warning(f"⚠️ New freshness check not available: {e}")
     
     # Run startup data check with update registry
     try:
@@ -117,6 +154,18 @@ class StockResponse(BaseModel):
     roe: Optional[float] = None
     roa: Optional[float] = None
     eps: Optional[float] = None
+    
+    # Financials (Added)
+    revenue: Optional[float] = None
+    profit: Optional[float] = None
+    total_assets: Optional[float] = None
+    total_debt: Optional[float] = None
+    owner_equity: Optional[float] = None
+    cash: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    foreign_ownership: Optional[float] = None
+    gross_margin: Optional[float] = None
+    net_margin: Optional[float] = None
 
 
 class StockListResponse(BaseModel):
@@ -235,9 +284,11 @@ async def screen_stocks(
     gross_margin_min: Optional[float] = Query(None, description="Biên LN gộp % tối thiểu"),
     dividend_yield_min: Optional[float] = Query(None, ge=0, description="Tỷ suất cổ tức % tối thiểu"),
     
-    # === Pagination ===
+    # === Pagination & Sorting ===
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=2000, description="Items per page"),
+    sort_by: Optional[str] = Query('market_cap', description="Sort by field"),
+    order: Optional[str] = Query('desc', description="Sort order (asc/desc)"),
 ):
     """
     Advanced stock screener with comprehensive filters.
@@ -293,7 +344,9 @@ async def screen_stocks(
         net_margin_min=net_margin_min,
         gross_margin_min=gross_margin_min,
         dividend_yield_min=dividend_yield_min,
-        # Pagination
+        # Sort & Paginate
+        sort_by=sort_by,
+        order=order,
         limit=page_size,
         offset=offset,
     )
@@ -365,6 +418,28 @@ async def get_stock_history(
     }
 
 
+@app.get("/api/stocks/realtime")
+async def get_realtime_prices(
+    group: str = Query("VN30", description="Stock group (VN30, HOSE, HNX, UPCOM)"),
+    symbols: Optional[str] = Query(None, description="Comma-separated list of symbols to filter")
+):
+    """
+    Get real-time price snapshot from SSI iBoard.
+    Proxies requests to SSI to avoid database bottlenecks for live data.
+    """
+    collector = await get_ssi_collector()
+    
+    # Get snapshot for group
+    data = await collector.get_market_snapshot(group)
+    
+    # Filter if symbols provided
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(',')]
+        data = [s for s in data if s['symbol'] in symbol_list]
+        
+    return {"group": group, "stocks": data, "count": len(data)}
+
+
 @app.get("/api/stocks/{symbol}")
 async def get_stock(symbol: str):
     """Get details for a specific stock."""
@@ -386,16 +461,96 @@ async def get_sectors():
     return {"sectors": sectors}
 
 
-@app.get("/api/stocks/{symbol}/metrics")
-async def get_stock_metrics(symbol: str):
-    """Get calculated technical metrics for a stock."""
+@app.get("/api/smart-board/sector/{sector_name}")
+async def get_smart_board_sector(sector_name: str, limit: int = 20):
+    """Get stocks for a specific sector for Smart Board."""
     db = await get_database()
-    metrics = await db.get_stock_metrics(symbol)
+    stocks = await db.get_stocks_by_sector(sector_name, limit)
+    return {"sector": sector_name, "stocks": stocks}
+
+
+@app.get("/api/smart-board/highlights")
+async def get_smart_board_highlights():
+    """Get highlight lists (Top Gainers, Top Volume)."""
+    db = await get_database()
     
-    if not metrics:
-        raise HTTPException(status_code=404, detail=f"No metrics for {symbol}")
+    # Get top gainers
+    async with db.connection() as conn:
+        cursor = await conn.execute("""
+            SELECT s.symbol, s.company_name, sp.current_price, sp.price_change, sp.percent_change, sp.volume
+            FROM stocks s
+            JOIN stock_prices sp ON s.symbol = sp.symbol
+            WHERE sp.percent_change > 0 AND sp.volume > 100000
+            ORDER BY sp.percent_change DESC
+            LIMIT 10
+        """)
+        gainers = [dict(row) for row in await cursor.fetchall()]
+        
+        # Get top volume
+        cursor = await conn.execute("""
+            SELECT s.symbol, s.company_name, sp.current_price, sp.price_change, sp.percent_change, sp.volume
+            FROM stocks s
+            JOIN stock_prices sp ON s.symbol = sp.symbol
+            WHERE sp.volume > 0
+            ORDER BY sp.volume DESC
+            LIMIT 10
+        """)
+        active = [dict(row) for row in await cursor.fetchall()]
+        
+        # Get new highs (mock logic using price vs 52w if available, or just strong uptrend)
+        # Using simple gainers for now as "Vượt đỉnh" needs history analysis
+        
+    return {
+        "highlights": [
+            {"id": "top-gainers", "name": "Tăng giá mạnh", "stocks": gainers},
+            {"id": "top-volume", "name": "Dòng tiền mạnh", "stocks": active}
+        ]
+    }
+
+
+
+@app.get("/api/smart-board/indices")
+async def get_smart_board_indices():
+    """Get latest market indices for Smart Board display."""
+    db = await get_database()
+    indices = await db.get_market_indices()
     
-    return metrics
+    # Default indices structure for fallback
+    default_indices = [
+        {"index_code": "VNINDEX", "value": 0, "change_value": 0, "change_percent": 0, "advances": 0, "declines": 0, "unchanged": 0},
+        {"index_code": "VN30", "value": 0, "change_value": 0, "change_percent": 0, "advances": 0, "declines": 0, "unchanged": 0},
+        {"index_code": "HNX", "value": 0, "change_value": 0, "change_percent": 0, "advances": 0, "declines": 0, "unchanged": 0},
+        {"index_code": "UPCOM", "value": 0, "change_value": 0, "change_percent": 0, "advances": 0, "declines": 0, "unchanged": 0},
+    ]
+    
+    from_database = False
+    if indices:
+        from_database = True
+        # Update defaults with actual data from database
+        # Create a map supporting both exact matches and *INDEX variants
+        index_map = {idx.get("index_code"): idx for idx in indices if idx.get("index_code")}
+        
+        for i, default in enumerate(default_indices):
+            code = default["index_code"]
+            # Try exact match first, then try with INDEX suffix
+            db_index = index_map.get(code) or index_map.get(f"{code}INDEX")
+            
+            if db_index:
+                default_indices[i] = {
+                    "index_code": code,  # Keep the display name (HNX, UPCOM)
+                    "value": db_index.get("value", 0) or 0,
+                    "change_value": db_index.get("change_value", 0) or 0,
+                    "change_percent": db_index.get("change_percent", 0) or 0,
+                    "advances": db_index.get("advances", 0) or 0,
+                    "declines": db_index.get("declines", 0) or 0,
+                    "unchanged": db_index.get("unchanged", 0) or 0,
+                }
+    
+    return {
+        "indices": default_indices,
+        "from_database": from_database,
+        "updated_at": datetime.now().isoformat()
+    }
 
 
 # ============================================
@@ -594,15 +749,258 @@ async def get_indices(
     return {"indices": indices}
 
 
+@app.get("/api/data/shareholders/{symbol}")
+async def get_shareholders(
+    symbol: str,
+    refresh: bool = Query(False, description="Force refresh from API")
+):
+    """
+    Get shareholders for a stock.
+    Returns: Ban lãnh đạo, Tổ chức, Nước ngoài, Cổ đông lớn, Cá nhân
+    """
+    db = await get_database()
+    
+    # Check if we need to fetch fresh data
+    shareholders = await db.get_shareholders(symbol.upper())
+    
+    if not shareholders or refresh:
+        # Fetch from VnStock API
+        collector = await get_collector()
+        try:
+            new_data = await collector.collect_shareholders(symbol.upper())
+            if new_data:
+                await db.upsert_shareholders(new_data)
+                shareholders = await db.get_shareholders(symbol.upper())
+        except Exception as e:
+            logger.warning(f"Failed to refresh shareholders for {symbol}: {e}")
+    
+    return {
+        "symbol": symbol.upper(),
+        "shareholders": shareholders,
+        "count": len(shareholders)
+    }
+
+
+@app.get("/api/data/officers/{symbol}")
+async def get_officers(
+    symbol: str,
+    status: str = Query("working", description="Filter: working, resigned, all"),
+    refresh: bool = Query(False, description="Force refresh from API")
+):
+    """
+    Get company officers/management for a stock.
+    Returns: Ban lãnh đạo with positions and ownership.
+    """
+    db = await get_database()
+    
+    officers = await db.get_officers(symbol.upper(), status)
+    
+    if not officers or refresh:
+        collector = await get_collector()
+        try:
+            new_data = await collector.collect_officers(symbol.upper())
+            if new_data:
+                await db.upsert_officers(new_data)
+                officers = await db.get_officers(symbol.upper(), status)
+        except Exception as e:
+            logger.warning(f"Failed to refresh officers for {symbol}: {e}")
+    
+    return {
+        "symbol": symbol.upper(),
+        "officers": officers,
+        "count": len(officers),
+        "filter": status
+    }
+
+
+@app.get("/api/data/profile/{symbol}")
+async def get_company_profile(
+    symbol: str,
+    refresh: bool = Query(False, description="Force refresh from API")
+):
+    """
+    Get company profile including sector, industry, and overview.
+    """
+    db = await get_database()
+    
+    # Get basic stock info
+    stocks = await db.get_stocks(search=symbol.upper(), limit=1)
+    profile = stocks[0] if stocks else None
+    
+    if not profile or refresh or not profile.get('sector'):
+        # Fetch full profile from VnStock
+        collector = await get_collector()
+        try:
+            details = await collector.collect_stock_details(symbol.upper())
+            if details:
+                # Update stock record with sector/industry
+                await db.upsert_stocks([details])
+                stocks = await db.get_stocks(search=symbol.upper(), limit=1)
+                profile = stocks[0] if stocks else None
+        except Exception as e:
+            logger.warning(f"Failed to refresh profile for {symbol}: {e}")
+    
+    # Also get shareholders and dividends summary
+    shareholders = await db.get_shareholders(symbol.upper())
+    dividends = await db.get_dividend_history(symbol.upper(), limit=5)
+    
+    return {
+        "symbol": symbol.upper(),
+        "profile": profile,
+        "shareholders_count": len(shareholders),
+        "recent_dividends": len(dividends),
+        "top_shareholders": shareholders[:5] if shareholders else []
+    }
+
+
+# ============================================
+# Real-time Market Data (SSI iBoard)
+# ============================================
+
+@app.get("/api/realtime/snapshot/{group}")
+async def get_realtime_snapshot(
+    group: str = "HOSE"
+):
+    """
+    Get real-time price snapshot for a market group.
+    
+    Groups: VN30, HOSE, HNX, UPCOM, VN100
+    Returns: Real-time prices with bid/ask levels
+    """
+    from ssi_iboard_collector import get_ssi_collector
+    
+    valid_groups = ['VN30', 'HOSE', 'HNX', 'UPCOM', 'VN100']
+    if group.upper() not in valid_groups:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid group. Valid: {valid_groups}"
+        )
+    
+    collector = await get_ssi_collector()
+    data = await collector.get_market_snapshot(group.upper())
+    
+    return {
+        "group": group.upper(),
+        "stocks": data,
+        "count": len(data),
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/realtime/all")
+async def get_all_realtime():
+    """
+    Get real-time prices for all markets (HOSE, HNX, UPCOM).
+    """
+    from ssi_iboard_collector import get_ssi_collector
+    
+    collector = await get_ssi_collector()
+    data = await collector.get_all_markets()
+    
+    total = sum(len(v) for v in data.values())
+    
+    return {
+        "markets": data,
+        "total_stocks": total,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/realtime/symbols")
+async def get_ssi_symbols():
+    """Get full list of SSI supported symbols."""
+    from ssi_iboard_collector import get_ssi_collector
+    
+    collector = await get_ssi_collector()
+    symbols = await collector.get_stock_info()
+    
+    return {
+        "symbols": symbols,
+        "count": len(symbols)
+    }
+
+
+# ============================================
+# Financial Reports & Orderflow
+# ============================================
+
+@app.get("/api/data/bctc/{symbol}")
+async def get_financial_reports(
+    symbol: str,
+    report_type: str = Query("income", description="income, balance, cashflow"),
+    quarterly: bool = Query(True, description="Quarterly or yearly")
+):
+    """
+    Get financial statement from CafeF.
+    Returns parsed BCTC tables.
+    """
+    from cafef_scraper import get_cafef_scraper
+    
+    scraper = await get_cafef_scraper()
+    df = await scraper.get_financial_statement(
+        symbol.upper(),
+        report_type,
+        quarterly=quarterly
+    )
+    
+    if df is None:
+        return {"symbol": symbol.upper(), "data": None, "message": "No data found"}
+    
+    # Convert DataFrame to records
+    records = df.to_dict('records')
+    
+    return {
+        "symbol": symbol.upper(),
+        "report_type": report_type,
+        "quarterly": quarterly,
+        "rows": len(records),
+        "columns": list(df.columns),
+        "data": records
+    }
+
+
+@app.get("/api/data/orderflow/{symbol}")
+async def get_orderflow_history(
+    symbol: str,
+    days: int = Query(30, ge=1, le=365, description="Days of history")
+):
+    """
+    Get daily orderflow history for a symbol.
+    Includes foreign buy/sell, dư mua/dư bán per session.
+    """
+    db = await get_database()
+    
+    query = """
+        SELECT * FROM daily_orderflow
+        WHERE symbol = ?
+        ORDER BY trade_date DESC
+        LIMIT ?
+    """
+    
+    async with db.connection() as conn:
+        cursor = await conn.execute(query, (symbol.upper(), days))
+        rows = await cursor.fetchall()
+        data = [dict(row) for row in rows]
+    
+    return {
+        "symbol": symbol.upper(),
+        "history": data,
+        "count": len(data)
+    }
+
+
 # ============================================
 # AI Analysis Endpoints
 # ============================================
+
+
 
 class AIAnalysisRequestModel(BaseModel):
     """Request model for AI stock analysis."""
     api_key: str
     model: str = "gemini-2.0-flash-exp"
     custom_prompt: Optional[str] = None
+    prompt_template: Optional[str] = None
     enable_grounding: bool = True
 
 
@@ -631,6 +1029,7 @@ async def analyze_stock(symbol: str, request: AIAnalysisRequestModel):
             api_key=request.api_key,
             model=request.model,
             custom_prompt=request.custom_prompt,
+            prompt_template=request.prompt_template,
             enable_grounding=request.enable_grounding
         )
         
@@ -690,6 +1089,13 @@ async def get_ai_models():
         ],
         "default": "gemini-2.0-flash-exp"
     }
+
+
+@app.get("/api/ai/default-prompt")
+async def get_default_prompt():
+    """Get the default AI analysis prompt template."""
+    from ai_service import ANALYSIS_PROMPT_TEMPLATE
+    return {"template": ANALYSIS_PROMPT_TEMPLATE}
 
 
 # ============================================

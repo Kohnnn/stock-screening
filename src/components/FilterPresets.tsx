@@ -1,335 +1,135 @@
-/**
- * Filter Presets Component
- * 
- * Allows users to save, load, rename, and delete filter presets.
- * Presets are stored in localStorage as JSON.
- */
+import React, { useState, useEffect } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
+import { StockFilters } from '../types';
 
-import React, { useState, useEffect, useCallback } from 'react';
-
-// Types
-interface StockFilters {
-    exchange?: 'HOSE' | 'HNX' | 'UPCOM' | '';
-    sector?: string;
-    industry?: string;
-    search?: string;
-    marketCapMin?: number;
-    marketCapMax?: number;
-    priceMin?: number;
-    priceMax?: number;
-    priceChangeMin?: number;
-    priceChangeMax?: number;
-    adtvValueMin?: number;
-    rsiMin?: number;
-    rsiMax?: number;
-    rsMin?: number;
-    rsMax?: number;
-    priceVsSma20Min?: number;
-    priceVsSma20Max?: number;
-    macdHistogramMin?: number;
-    macdHistogramMax?: number;
-    stockTrend?: string;
-    priceReturn1mMin?: number;
-    peMin?: number;
-    peMax?: number;
-    pbMin?: number;
-    pbMax?: number;
-    roeMin?: number;
-    roeMax?: number;
-    revenueGrowthMin?: number;
-    npatGrowthMin?: number;
-    netMarginMin?: number;
-    grossMarginMin?: number;
-    dividendYieldMin?: number;
+interface FilterPresetsProps {
+    currentFilters: StockFilters;
+    onLoadPreset: (preset: StockFilters) => void;
 }
 
-interface FilterPreset {
+interface Preset {
     id: string;
     name: string;
     filters: StockFilters;
-    createdAt: string;
-    updatedAt: string;
-}
-
-// Storage key
-const PRESETS_STORAGE_KEY = 'vnstock-filter-presets';
-
-// Generate unique ID
-const generateId = () => Math.random().toString(36).substr(2, 9);
-
-// Load presets from localStorage
-export function loadPresets(): FilterPreset[] {
-    try {
-        const stored = localStorage.getItem(PRESETS_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : [];
-    } catch {
-        return [];
-    }
-}
-
-// Save presets to localStorage
-export function savePresets(presets: FilterPreset[]): void {
-    try {
-        localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
-    } catch (e) {
-        console.error('Failed to save presets:', e);
-    }
-}
-
-// Hook for managing presets
-export function useFilterPresets() {
-    const [presets, setPresets] = useState<FilterPreset[]>([]);
-    const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
-
-    // Load on mount
-    useEffect(() => {
-        setPresets(loadPresets());
-    }, []);
-
-    // Save preset
-    const savePreset = useCallback((name: string, filters: StockFilters) => {
-        const now = new Date().toISOString();
-        const newPreset: FilterPreset = {
-            id: generateId(),
-            name,
-            filters,
-            createdAt: now,
-            updatedAt: now,
-        };
-
-        setPresets(prev => {
-            const updated = [newPreset, ...prev];
-            savePresets(updated);
-            return updated;
-        });
-
-        return newPreset;
-    }, []);
-
-    // Update existing preset
-    const updatePreset = useCallback((id: string, updates: Partial<FilterPreset>) => {
-        setPresets(prev => {
-            const updated = prev.map(p =>
-                p.id === id
-                    ? { ...p, ...updates, updatedAt: new Date().toISOString() }
-                    : p
-            );
-            savePresets(updated);
-            return updated;
-        });
-    }, []);
-
-    // Delete preset
-    const deletePreset = useCallback((id: string) => {
-        setPresets(prev => {
-            const updated = prev.filter(p => p.id !== id);
-            savePresets(updated);
-            return updated;
-        });
-        if (selectedPresetId === id) {
-            setSelectedPresetId(null);
-        }
-    }, [selectedPresetId]);
-
-    // Get selected preset
-    const selectedPreset = presets.find(p => p.id === selectedPresetId) || null;
-
-    return {
-        presets,
-        selectedPreset,
-        selectedPresetId,
-        setSelectedPresetId,
-        savePreset,
-        updatePreset,
-        deletePreset,
-    };
-}
-
-// Filter Presets UI Component
-interface FilterPresetsProps {
-    currentFilters: StockFilters;
-    onLoadPreset: (filters: StockFilters) => void;
 }
 
 export function FilterPresets({ currentFilters, onLoadPreset }: FilterPresetsProps) {
-    const {
-        presets,
-        selectedPresetId,
-        setSelectedPresetId,
-        savePreset,
-        updatePreset,
-        deletePreset,
-    } = useFilterPresets();
-
-    const [showSaveModal, setShowSaveModal] = useState(false);
+    const { t } = useLanguage();
+    const [presets, setPresets] = useState<Preset[]>([]);
+    const [isCreating, setIsCreating] = useState(false);
     const [newPresetName, setNewPresetName] = useState('');
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [editName, setEditName] = useState('');
 
-    // Check if current filters are empty
-    const hasActiveFilters = Object.values(currentFilters).some(v => v !== undefined && v !== '');
+    // Load presets from localStorage on mount
+    useEffect(() => {
+        const saved = localStorage.getItem('screener_presets');
+        if (saved) {
+            try {
+                setPresets(JSON.parse(saved));
+            } catch (e) {
+                console.error('Failed to parse presets', e);
+            }
+        }
+    }, []);
 
-    // Handle save new preset
-    const handleSave = () => {
+    const savePresets = (newPresets: Preset[]) => {
+        setPresets(newPresets);
+        localStorage.setItem('screener_presets', JSON.stringify(newPresets));
+    };
+
+    const handleCreate = () => {
         if (!newPresetName.trim()) return;
-
-        const preset = savePreset(newPresetName.trim(), currentFilters);
-        setSelectedPresetId(preset.id);
+        const newPreset: Preset = {
+            id: Date.now().toString(),
+            name: newPresetName.trim(),
+            filters: { ...currentFilters } // Clone current filters
+        };
+        savePresets([...presets, newPreset]);
         setNewPresetName('');
-        setShowSaveModal(false);
+        setIsCreating(false);
     };
 
-    // Handle load preset
-    const handleLoad = (preset: FilterPreset) => {
-        setSelectedPresetId(preset.id);
-        onLoadPreset(preset.filters);
-    };
-
-    // Handle rename
-    const handleRename = (id: string) => {
-        if (!editName.trim()) return;
-        updatePreset(id, { name: editName.trim() });
-        setEditingId(null);
-        setEditName('');
-    };
-
-    // Handle delete with confirmation
-    const handleDelete = (id: string, name: string) => {
-        if (window.confirm(`Xóa bộ lọc "${name}"?`)) {
-            deletePreset(id);
+    const handleDelete = (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm('Delete this preset?')) {
+            savePresets(presets.filter(p => p.id !== id));
         }
     };
 
     return (
-        <div className="filter-presets">
-            {/* Preset Selector & Actions */}
-            <div className="preset-controls">
-                <select
-                    className="form-select preset-select"
-                    value={selectedPresetId || ''}
-                    onChange={(e) => {
-                        const preset = presets.find(p => p.id === e.target.value);
-                        if (preset) handleLoad(preset);
-                    }}
-                >
-                    <option value="">📁 Bộ lọc đã lưu...</option>
-                    {presets.map(preset => (
-                        <option key={preset.id} value={preset.id}>
-                            {preset.name}
-                        </option>
-                    ))}
-                </select>
-
-                <button
-                    className="btn btn-sm btn-primary"
-                    onClick={() => setShowSaveModal(true)}
-                    disabled={!hasActiveFilters}
-                    title={!hasActiveFilters ? "Cần có ít nhất một bộ lọc" : "Lưu bộ lọc hiện tại"}
-                >
-                    💾 Lưu
-                </button>
-
-                {selectedPresetId && (
-                    <>
-                        <button
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => {
-                                const preset = presets.find(p => p.id === selectedPresetId);
-                                if (preset) {
-                                    updatePreset(preset.id, { filters: currentFilters });
-                                }
-                            }}
-                            title="Cập nhật bộ lọc đã chọn"
-                        >
-                            🔄
-                        </button>
-                        <button
-                            className="btn btn-sm btn-secondary"
-                            onClick={() => {
-                                const preset = presets.find(p => p.id === selectedPresetId);
-                                if (preset) {
-                                    setEditName(preset.name);
-                                    setEditingId(preset.id);
-                                }
-                            }}
-                            title="Đổi tên"
-                        >
-                            ✏️
-                        </button>
-                        <button
-                            className="btn btn-sm btn-danger"
-                            onClick={() => {
-                                const preset = presets.find(p => p.id === selectedPresetId);
-                                if (preset) handleDelete(preset.id, preset.name);
-                            }}
-                            title="Xóa"
-                        >
-                            🗑️
-                        </button>
-                    </>
+        <div className="mb-4 pb-4 border-b border-base-300">
+            <div className="flex justify-between items-center mb-2">
+                <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Presets</h4>
+                {!isCreating && (
+                    <button
+                        className="text-xs text-primary hover:text-primary-focus"
+                        onClick={() => setIsCreating(true)}
+                    >
+                        + Save
+                    </button>
                 )}
             </div>
 
-            {/* Save Modal */}
-            {showSaveModal && (
-                <div className="preset-modal-overlay" onClick={() => setShowSaveModal(false)}>
-                    <div className="preset-modal" onClick={e => e.stopPropagation()}>
-                        <h4>💾 Lưu bộ lọc</h4>
-                        <input
-                            type="text"
-                            className="form-input"
-                            placeholder="Tên bộ lọc..."
-                            value={newPresetName}
-                            onChange={(e) => setNewPresetName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                            autoFocus
-                        />
-                        <div className="preset-modal-actions">
-                            <button className="btn btn-secondary" onClick={() => setShowSaveModal(false)}>
-                                Hủy
-                            </button>
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleSave}
-                                disabled={!newPresetName.trim()}
-                            >
-                                Lưu
-                            </button>
-                        </div>
-                    </div>
+            {isCreating && (
+                <div className="mb-2 flex gap-1">
+                    <input
+                        type="text"
+                        className="form-input text-sm py-1 px-2"
+                        placeholder="Preset name..."
+                        value={newPresetName}
+                        onChange={(e) => setNewPresetName(e.target.value)}
+                        autoFocus
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+                    />
+                    <button className="btn btn-xs btn-primary" onClick={handleCreate}>✓</button>
+                    <button className="btn btn-xs btn-ghost" onClick={() => setIsCreating(false)}>✕</button>
                 </div>
             )}
 
-            {/* Rename Modal */}
-            {editingId && (
-                <div className="preset-modal-overlay" onClick={() => setEditingId(null)}>
-                    <div className="preset-modal" onClick={e => e.stopPropagation()}>
-                        <h4>✏️ Đổi tên bộ lọc</h4>
-                        <input
-                            type="text"
-                            className="form-input"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleRename(editingId)}
-                            autoFocus
-                        />
-                        <div className="preset-modal-actions">
-                            <button className="btn btn-secondary" onClick={() => setEditingId(null)}>
-                                Hủy
-                            </button>
+            <div className="flex flex-col gap-1 max-h-40 overflow-y-auto custom-scrollbar">
+                {presets.length === 0 ? (
+                    <div className="text-xs text-gray-500 italic py-1">No saved presets</div>
+                ) : (
+                    presets.map(preset => (
+                        <div
+                            key={preset.id}
+                            className="flex justify-between items-center p-2 rounded hover:bg-base-300 cursor-pointer group text-sm"
+                            onClick={() => onLoadPreset(preset.filters)}
+                        >
+                            <span className="truncate">{preset.name}</span>
                             <button
-                                className="btn btn-primary"
-                                onClick={() => handleRename(editingId)}
-                                disabled={!editName.trim()}
+                                className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-500 transition-opacity"
+                                onClick={(e) => handleDelete(preset.id, e)}
+                                title="Delete preset"
                             >
-                                Lưu
+                                ✕
                             </button>
                         </div>
-                    </div>
+                    ))
+                )}
+            </div>
+
+            {/* Default Presets (Hardcoded examples) */}
+            <div className="mt-2 text-xs text-gray-500">
+                <div className="uppercase tracking-wider font-semibold mb-1 mt-2">Recommended</div>
+                <div
+                    className="p-2 rounded hover:bg-base-300 cursor-pointer text-sm"
+                    onClick={() => onLoadPreset({ peMax: 15, roeMin: 15, marketCapMin: 1000 })}
+                >
+                    💎 Value & Growth
                 </div>
-            )}
+                <div
+                    className="p-2 rounded hover:bg-base-300 cursor-pointer text-sm"
+                    onClick={() => onLoadPreset({ rsiMin: 30, rsiMax: 45, stockTrend: 'uptrend' })}
+                >
+                    📉 Oversold Uptrend
+                </div>
+                <div
+                    className="p-2 rounded hover:bg-base-300 cursor-pointer text-sm"
+                    onClick={() => onLoadPreset({ stockTrend: 'breakout', adtvValueMin: 1 })}
+                >
+                    🚀 Breakout Volume
+                </div>
+            </div>
         </div>
     );
 }
-
-export default FilterPresets;

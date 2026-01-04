@@ -19,15 +19,18 @@ This document provides a complete reference for all vnstock library functions an
 7. [Financial Statements API](#financial-statements-api)
 8. [Stock Screener API](#stock-screener-api)
 9. [Trading Board API](#trading-board-api)
-10. [Rate Limit Guidelines](#rate-limit-guidelines)
-11. [Best Practices](#best-practices)
+10. [Fund API](#fund-api)
+11. [Rate Limit Guidelines](#rate-limit-guidelines)
+12. [Best Practices](#best-practices)
 
 ---
 
 ## Installation & Setup
 
 ```bash
-pip install vnstock==3.3.1
+pip install -U vnstock
+# OR for specific vnstock3 version:
+# pip install vnstock3
 ```
 
 ### Basic Import Pattern
@@ -432,7 +435,43 @@ df = trading.price_board(symbols_list=['VCB', 'ACB', 'TCB', 'BID'])
 - `bid_1_price`, `bid_1_volume`, `bid_2_price`, `bid_2_volume`, `bid_3_price`, `bid_3_volume`
 - `ask_1_price`, `ask_1_volume`, `ask_2_price`, `ask_2_volume`, `ask_3_price`, `ask_3_volume`
 
----
+435: ---
+436: 
+437: ## Fund API
+438: 
+439: Access open-end fund data (fmarket.vn source).
+440: 
+441: ### Initialize Fund Module
+442: ```python
+443: from vnstock import Fund
+444: fund = Fund()
+445: ```
+446: 
+447: ### List All Open-End Funds
+448: ```python
+449: df = fund.listing()
+450: # Returns dataframe of all available funds
+451: ```
+452: 
+453: ### Filter Funds by Symbol
+454: ```python
+455: df = fund.filter('DC')
+456: # Returns funds containing 'DC' in symbol
+457: ```
+458: 
+459: ### Top Holdings
+460: ```python
+461: df = fund.details.top_holding('SSISCA')
+462: # Returns top assets held by the fund
+463: ```
+464: 
+465: ### NAV Report
+466: ```python
+467: df = fund.details.nav_report('SSISCA')
+468: # Returns Net Asset Value history
+469: ```
+470: 
+471: ---
 
 ## Rate Limit Guidelines
 

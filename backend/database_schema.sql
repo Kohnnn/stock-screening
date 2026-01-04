@@ -590,3 +590,122 @@ SELECT
     (SELECT COUNT(*) FROM price_history) as price_history_records,
     (SELECT MAX(updated_at) FROM stock_prices) as last_price_update,
     (SELECT MAX(updated_at) FROM stocks) as last_stock_update;
+
+-- ============================================
+-- Data Versions (Freshness Tracking)
+-- ============================================
+-- Tracks when each data type was last updated per symbol
+-- Enables intelligent gap detection and targeted updates
+CREATE TABLE IF NOT EXISTS data_versions (
+    symbol TEXT NOT NULL,
+    data_type TEXT NOT NULL,  -- 'price', 'financials', 'balance_sheet', 'profile'
+    last_updated TIMESTAMP NOT NULL,
+    quarter TEXT,             -- e.g., '2024Q4' for quarterly data, NULL for daily
+    source TEXT,              -- 'cophieu68', 'vnstock'
+    record_count INTEGER DEFAULT 1,
+    PRIMARY KEY (symbol, data_type, quarter)
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_versions_type ON data_versions(data_type);
+CREATE INDEX IF NOT EXISTS idx_data_versions_updated ON data_versions(last_updated);
+
+-- View for stale data detection
+CREATE VIEW IF NOT EXISTS v_stale_data AS
+SELECT 
+    dv.symbol,
+    dv.data_type,
+    dv.last_updated,
+    dv.quarter,
+    dv.source,
+    CASE 
+        WHEN dv.data_type = 'price' AND dv.last_updated < datetime('now', '-1 day') THEN 1
+        WHEN dv.data_type = 'financials' AND dv.last_updated < datetime('now', '-7 days') THEN 1
+        WHEN dv.data_type = 'balance_sheet' AND dv.last_updated < datetime('now', '-90 days') THEN 1
+        WHEN dv.data_type = 'profile' AND dv.last_updated < datetime('now', '-30 days') THEN 1
+        ELSE 0
+    END as is_stale
+FROM data_versions dv;
+
+-- ============================================
+-- Industry Flow (Sector-level money flow)
+-- Source: sieucophieu.vn API
+-- ============================================
+CREATE TABLE IF NOT EXISTS industry_flow (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    industry_name TEXT NOT NULL,
+    industry_name_en TEXT,            -- English name (derived)
+    cashflow REAL,                     -- Absolute cashflow value
+    rate_of_change REAL,               -- ROC percentage
+    rs_short REAL,                     -- Short-term relative strength
+    rs_mid REAL,                       -- Medium-term relative strength
+    rs_relative REAL,                  -- Overall relative strength
+    
+    -- Additional flow metrics (from 24hmoney if available)
+    net_buy_volume INTEGER,
+    net_buy_value REAL,
+    sector_performance REAL,
+    
+    source TEXT DEFAULT 'sieucophieu',
+    date_collected DATE DEFAULT (DATE('now')),  -- Date for uniqueness
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(industry_name, date_collected)
+);
+
+CREATE INDEX IF NOT EXISTS idx_industry_flow_name ON industry_flow(industry_name);
+CREATE INDEX IF NOT EXISTS idx_industry_flow_timestamp ON industry_flow(timestamp);
+CREATE INDEX IF NOT EXISTS idx_industry_flow_cashflow ON industry_flow(cashflow);
+CREATE INDEX IF NOT EXISTS idx_industry_flow_date ON industry_flow(date_collected);
+
+
+-- ============================================
+-- Daily Orderflow (Per-session trading data)
+-- Source: SSI iBoard, VnStock
+-- Tracks foreign buy/sell and bid/ask surplus per date
+-- ============================================
+CREATE TABLE IF NOT EXISTS daily_orderflow (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    trade_date DATE NOT NULL,
+    
+    -- Price data
+    open_price REAL,
+    high_price REAL,
+    low_price REAL,
+    close_price REAL,
+    volume INTEGER,
+    value REAL,                        -- Trading value in VND
+    
+    -- Foreign trading (Khối ngoại)
+    foreign_buy_volume INTEGER,
+    foreign_sell_volume INTEGER,
+    foreign_net_volume INTEGER,        -- buy - sell
+    foreign_net_value REAL,
+    foreign_room_remaining INTEGER,    -- Room khối ngoại còn lại
+    
+    -- Bid/Ask surplus (Dư mua/dư bán)
+    bid_surplus INTEGER,               -- Dư mua (total bid volume unmatched)
+    ask_surplus INTEGER,               -- Dư bán (total ask volume unmatched)
+    net_bid_ask INTEGER,               -- bid_surplus - ask_surplus
+    
+    -- Active buy/sell (Chủ động mua/bán)
+    active_buy_volume INTEGER,
+    active_sell_volume INTEGER,
+    active_net_volume INTEGER,         -- buy - sell
+    
+    -- Bid/Ask levels at close
+    bid_1_price REAL,
+    bid_1_volume INTEGER,
+    ask_1_price REAL,
+    ask_1_volume INTEGER,
+    
+    -- Metadata
+    data_source TEXT DEFAULT 'ssi_iboard',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, trade_date),
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_orderflow_symbol ON daily_orderflow(symbol);
+CREATE INDEX IF NOT EXISTS idx_daily_orderflow_date ON daily_orderflow(trade_date);
+CREATE INDEX IF NOT EXISTS idx_daily_orderflow_symbol_date ON daily_orderflow(symbol, trade_date);
+CREATE INDEX IF NOT EXISTS idx_daily_orderflow_foreign ON daily_orderflow(foreign_net_volume);

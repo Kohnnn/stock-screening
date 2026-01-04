@@ -36,8 +36,11 @@ lerna-debug.log*
 Thumbs.db
 
 # Database (local dev only, not the schema)
+# Ignore runtime database but keep initial baseline
 backend/data/*.db
 backend/data/*.db-journal
+!backend/data/initial_database.db
+!backend/data/data_manifest.json
 
 # Python
 *.egg-info
